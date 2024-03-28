@@ -1,2 +1,3 @@
-# APDB
-Advance programming for Bioengineering PhD
+# DCBI1302
+Advance programming for Bioengineering (Ph.D.)
+
