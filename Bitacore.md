@@ -20,6 +20,15 @@ The recommended contents are days: 1,2,5,6,8,11
 
 ## 02/04/2024
 
+Linux and HPC for big data II:  Files Manipulation
+
+### Slides
+
+[Class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W2C1.pdf)
+
+### additional work
+Practice with the files under the ***data*** directory
+
 ## 04/04/2024
 
 ## 09/04/2024
