@@ -31,6 +31,19 @@ Practice with the files under the ***data*** directory
 
 ## 04/04/2024
 
+Linux and HPC for big data II:  awk, sed and regular expressions
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W2C2.pdf)
+
+### additional work
+
+- [awk](https://learnbyexample.github.io/learn_gnuawk/)
+- [sed](https://learnbyexample.github.io/learn_gnused/cover.html)
+- [regex](https://regexr.com/)
+
+
 ## 09/04/2024
 
 ## 11/04/2024
