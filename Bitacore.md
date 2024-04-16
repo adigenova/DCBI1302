@@ -46,9 +46,30 @@ Linux and HPC for big data II:  awk, sed and regular expressions
 
 ## 09/04/2024
 
+Linux and HPC for big data III:  awk and sed
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W3C1.pdf)
+
+
+
 ## 11/04/2024
+To recover..
+
 
 ## 16/04/2024
+
+Fundamentos de Programación: Python
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W3C2.pdf)
+
+
+### additional work
+
+[Todos podemos programar](https://github.com/adigenova/tpp)
 
 ## 18/04/2024
 
