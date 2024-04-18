@@ -72,6 +72,12 @@ Fundamentos de Programación: Python
 [Todos podemos programar](https://github.com/adigenova/tpp)
 
 ## 18/04/2024
+Fundamentos de Programación II
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W4C1.pdf)
+
 
 ## 23/04/2024
 
