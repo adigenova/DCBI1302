@@ -80,6 +80,15 @@ Fundamentos de Programación II
 
 
 ## 23/04/2024
+Programación paralela y distribuida: Hilos y procesos
+
+### slides
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W5C1.pdf)
+
+### Código y trabajo adicional
+[Intro hilos y procesos](https://github.com/adigenova/DCBI1302/blob/main/code/Threads_C.ipynb)
+[Hilos II](https://github.com/adigenova/DCBI1302/blob/main/code/Pthreads_CV.ipynb)
+
 
 ## 25/04/2024
 
