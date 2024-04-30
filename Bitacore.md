@@ -86,8 +86,8 @@ Programación paralela y distribuida: Hilos y procesos
 [class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W5C1.pdf)
 
 ### Código y trabajo adicional
-[Intro hilos y procesos](https://github.com/adigenova/DCBI1302/blob/main/code/Threads_C.ipynb)
-[Hilos II](https://github.com/adigenova/DCBI1302/blob/main/code/Pthreads_CV.ipynb)
+- [Intro hilos y procesos](https://github.com/adigenova/DCBI1302/blob/main/code/Threads_C.ipynb)
+- [Hilos II](https://github.com/adigenova/DCBI1302/blob/main/code/Pthreads_CV.ipynb)
 
 
 ## 30/04/2024 y 02/05/2024
@@ -98,10 +98,10 @@ Programación paralela y distribuida: OpenMP y MPI
 [class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W6C1.pdf)
 
 ### Código y trabajo adicional
-[OpenMP I](https://github.com/adigenova/DCBI1302/blob/main/code/OpenMP.ipynb)
-[OpenMP II](https://github.com/adigenova/DCBI1302/blob/main/code/OMP2.ipynb)
-[MPI I](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_I.ipynb)
-[MPI II](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_II.ipynb)
-[MPI + OpenMP](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_OPenMP.ipynb)
+- [OpenMP I](https://github.com/adigenova/DCBI1302/blob/main/code/OpenMP.ipynb)
+- [OpenMP II](https://github.com/adigenova/DCBI1302/blob/main/code/OMP2.ipynb)
+- [MPI I](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_I.ipynb)
+- [MPI II](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_II.ipynb)
+- [MPI + OpenMP](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_OPenMP.ipynb)
 
 
