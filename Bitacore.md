@@ -79,7 +79,7 @@ Fundamentos de Programación II
 [class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W4C1.pdf)
 
 
-## 23/04/2024
+## 23/04/2024 y 25/04/2024
 Programación paralela y distribuida: Hilos y procesos
 
 ### slides
@@ -90,5 +90,18 @@ Programación paralela y distribuida: Hilos y procesos
 [Hilos II](https://github.com/adigenova/DCBI1302/blob/main/code/Pthreads_CV.ipynb)
 
 
-## 25/04/2024
+## 30/04/2024 y 02/05/2024
+
+Programación paralela y distribuida: OpenMP y MPI
+
+### slides
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W6C1.pdf)
+
+### Código y trabajo adicional
+[OpenMP I](https://github.com/adigenova/DCBI1302/blob/main/code/OpenMP.ipynb)
+[OpenMP II](https://github.com/adigenova/DCBI1302/blob/main/code/OMP2.ipynb)
+[MPI I](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_I.ipynb)
+[MPI II](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_II.ipynb)
+[MPI + OpenMP](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_OPenMP.ipynb)
+
 
