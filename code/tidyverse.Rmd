@@ -1,0 +1,59 @@
+---
+title: "tidyverse"
+author: "Alex Di Genova"
+output: rmarkdown::github_document
+
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## tidyverse
+
+```{r tidy}
+library(tidyverse)
+glimpse(mtcars)
+```
+
+## tidyverse
+
+operators and verbs
+
+```{r pressure, echo=FALSE}
+iris %>%
+  select(Petal.Length, Petal.Width, Species) %>%
+  filter(Species %in% c("versicolor", "setosa")) %>%
+  group_by(Species) %>%
+  summarize(
+    AvgPetalLength = mean(Petal.Length),
+    AvgPetalWidth = mean(Petal.Width))
+```
+
+## explore
+
+```{r ggplot}
+glimpse(mpg)
+ggplot(mpg) + geom_point(mapping = aes(x = displ, y = hwy))
+
+```
+
+### Facets
+
+```{r ggplot2}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color=manufacturer)) +
+  facet_wrap(~ class, nrow = 2)
+```
+
+## Dplyr
+
+### Filter
+
+```{r filter}
+mpg %>% filter(manufacturer == "audi") %>% head()
+```
+```{r filter2}
+mpg %>% filter(manufacturer %in% c("audi","chevrolet")) %>% arrange(desc(year),manufacturer)
+```
