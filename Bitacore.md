@@ -105,3 +105,46 @@ Programación paralela y distribuida: OpenMP y MPI
 - [MPI + OpenMP](https://github.com/adigenova/DCBI1302/blob/main/code/MPI_OPenMP.ipynb)
 
 
+## 05/05/2024 y 07/05/2024
+
+Nextflow
+
+## slides
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W7C1.pdf)
+
+## Trabajo adicional
+
+1. [GRoovy](http://groovy-lang.org/documentation.html)
+2. [Cheatsheet Nextflow](https://github.com/chlazaris/Nextflow_training/blob/main/nextflow_cheatsheet.md)
+3. [Docs Nextflow](https://www.nextflow.io/docs/latest/script.html)
+
+## 14/05/2024
+
+Introduction to tidyverse
+
+## slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W8C1.pdf)
+
+## Code
+ [Intro tidyverse](https://github.com/adigenova/DCBI1302/blob/main/code/tidyverse.Rmd)
+
+
+## 16/05/2024
+
+Tidyverse verbs
+
+## slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W8C2.pdf)
+
+## Code
+ [Intro tidyverse](https://github.com/adigenova/DCBI1302/blob/main/code/tidyverse.Rmd)
+ 
+ Practicar los verbos de tidyverse con los datos de ***data/worldcitiespop.csv.gz***
+ 
+## Semana receso 20-24/05
+
+### Entrega Notas Tarea 1
+
+### Enunciado Tarea 2
