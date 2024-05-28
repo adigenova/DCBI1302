@@ -148,3 +148,13 @@ Tidyverse verbs
 ### Entrega Notas Tarea 1
 
 ### Enunciado Tarea 2
+
+## 28/05/2024
+
+Tidyverse ggplot2
+
+## slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W9C1.pdf)
+
+
