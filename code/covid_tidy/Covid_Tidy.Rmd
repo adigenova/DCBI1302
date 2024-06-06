@@ -61,3 +61,25 @@ pdf("Fig1.pdf",5,3)
 (p1|p2) + plot_annotation(tag_levels = 'A')
 dev.off()
 ```
+### Intra-Host Heterogeneity
+
+We compute the number of iSNV present in the dataset and perform several statistical analyses
+
+#### loading the data
+
+```{r loadisnv}
+csv_files <- list.files(pattern="*.variants.tsv",path = "data/SNVs/")
+
+l_data <- list()
+for (file in csv_files) {
+  data <- read.table(paste0("data/SNVs/",file),h=T)
+  #data <- data %>% filter(ALT_FREQ >=0.95)
+  data$Filename <- file
+  l_data[[file]] <- data
+}
+# we merge all list dataframes by row
+SNV_ivar <- bind_rows(l_data)
+SNV_ivar=SNV_ivar %>% separate(Filename,into=c(NA,NA,"barcode"), remove=TRUE,extra="drop") %>% mutate(barcode=as.integer(barcode))
+
+glimpse(SNV_ivar)
+```
