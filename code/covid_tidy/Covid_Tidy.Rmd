@@ -9,22 +9,55 @@ output: rmarkdown::github_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## COVID 19 data analysis
+This Rmarkdown is designed to handle COVID 19 data and produce figures as well as informative analysis.
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+### Demographic data of COVID19 samples
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+We start plotting a Chilean map
+```{r map}
+library(ggplot2)
+library(rnaturalearth)
 
-```{r cars, echo=FALSE}
-summary(cars)
+# Obtener los datos geográficos de Chile
+chile_map <- ne_countries(country = "Chile", returnclass = "sf")
+
+# Coordenadas aproximadas de Santiago y Rancagua
+locations <- data.frame(
+  city = c("Santiago", "Rancagua"),
+  lon = c(-70.6483, -70.7398),
+  lat = c(-33.4569, -34.1708)
+)
+
+# Crear el mapa utilizando ggplot2 y resaltar Santiago y Rancagua
+p1=ggplot(data = chile_map) +
+  geom_sf() +
+  geom_point(data = locations, aes(x = lon, y = lat, color = city, shape=city), size = 3) +
+  scale_color_manual(values = c("Santiago" = "blue", "Rancagua" = "red")) +
+  ggtitle("Chile") +
+  theme_classic() +
+  theme(text = element_text(size = 12), legend.position = "none",  axis.text.x=element_blank()) +
+  labs(color = "Ciudad")
+p1
+```
+We get demographic data
+```{r democovid}
+library(tidyverse)
+library(ggbeeswarm)
+df=read.table("data/all_samples.txt", h=T)
+df=df %>% separate(Date, into=c("m","d","y")) %>% mutate(Ct=as.integer(Ct))
+
+p2=df %>% ggplot(aes(x=y,y=Age,color=Region,shape=Sex)) + geom_quasirandom() +
+scale_color_manual(values = c("Metropolitana" = "blue", "O'Higgins" = "red")) + labs(x="Years",y="Age",title="Samples")+
+  theme_minimal()
+p2
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+We merge plot1 and plot2
+```{r, mergedplots, fig.width=5,fig.height=3}
+library(patchwork)
+(p1|p2) + plot_annotation(tag_levels = 'A')
+pdf("Fig1.pdf",5,3)
+(p1|p2) + plot_annotation(tag_levels = 'A')
+dev.off()
 ```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
