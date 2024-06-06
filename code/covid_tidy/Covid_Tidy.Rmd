@@ -2,7 +2,7 @@
 title: "Tidyverse_COVID_Example"
 author: "Alex Di Genova"
 date: "`r Sys.Date()`"
-output: html_document
+output: rmarkdown::github_document
 ---
 
 ```{r setup, include=FALSE}
