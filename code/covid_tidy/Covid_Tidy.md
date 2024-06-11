@@ -1,7 +1,7 @@
 Tidyverse_COVID_Example
 ================
 Alex Di Genova
-2024-06-06
+2024-06-11
 
 ## COVID 19 data analysis
 
@@ -32,7 +32,7 @@ p1=ggplot(data = chile_map) +
   geom_point(data = locations, aes(x = lon, y = lat, color = city, shape=city), size = 3) +
   scale_color_manual(values = c("Santiago" = "blue", "Rancagua" = "red")) +
   ggtitle("Chile") +
-  theme_classic() +
+  theme_light() +
   theme(text = element_text(size = 12), legend.position = "none",  axis.text.x=element_blank()) +
   labs(color = "Ciudad")
 p1
@@ -62,24 +62,63 @@ df=df %>% separate(Date, into=c("m","d","y")) %>% mutate(Ct=as.integer(Ct))
 
 p2=df %>% ggplot(aes(x=y,y=Age,color=Region,shape=Sex)) + geom_quasirandom() +
 scale_color_manual(values = c("Metropolitana" = "blue", "O'Higgins" = "red")) + labs(x="Years",y="Age",title="Samples")+
-  theme_minimal()
+  theme_light()
 p2
 ```
 
 ![](Covid_Tidy_files/figure-gfm/democovid-1.png)<!-- -->
 
+``` r
+p3=df %>% ggplot(aes(x=Age,y=Ct,color=Sex,group=Region)) + 
+  geom_point() +
+  geom_smooth(method="lm")+
+  geom_hline(yintercept = 28,linetype = 2) +
+  facet_wrap(.~Region)+
+  labs(title="Ct vs Age",x="Edad",y="Ct") +
+  theme_light()
+```
+
 We merge plot1 and plot2
 
 ``` r
 library(patchwork)
-(p1|p2) + plot_annotation(tag_levels = 'A')
+(p1|p2/p3) + plot_annotation(tag_levels = 'A')
 ```
+
+    ## `geom_smooth()` using formula = 'y ~ x'
+
+    ## Warning: The following aesthetics were dropped during statistical transformation: colour
+    ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
+    ##   the data.
+    ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
+    ##   variable into a factor?
+    ## The following aesthetics were dropped during statistical transformation: colour
+    ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
+    ##   the data.
+    ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
+    ##   variable into a factor?
 
 ![](Covid_Tidy_files/figure-gfm/mergedplots-1.png)<!-- -->
 
 ``` r
 pdf("Fig1.pdf",5,3)
-(p1|p2) + plot_annotation(tag_levels = 'A')
+(p1|p2|p3) + plot_annotation(tag_levels = 'A')
+```
+
+    ## `geom_smooth()` using formula = 'y ~ x'
+
+    ## Warning: The following aesthetics were dropped during statistical transformation: colour
+    ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
+    ##   the data.
+    ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
+    ##   variable into a factor?
+    ## The following aesthetics were dropped during statistical transformation: colour
+    ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
+    ##   the data.
+    ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
+    ##   variable into a factor?
+
+``` r
 dev.off()
 ```
 
