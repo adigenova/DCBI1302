@@ -157,4 +157,69 @@ Tidyverse ggplot2
 
 [class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W9C1.pdf)
 
+## 30/05/2024
+
+Tidyverse ggplot2: hands on
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/tidyverse.Rmd)
+
+## 04/06/2024
+
+Tidyverse ggplot2: hands on COVID data I
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/covid_tidy/Covid_Tidy.Rmd)
+
+## 06/06/2024
+
+Tidyverse ggplot2: Hands on COVID data II
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/covid_tidy/Covid_Tidy.Rmd)
+
+## 11/06/2024
+
+Tidyverse ggplot2: Hands on COVID data III
+
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/covid_tidy/Covid_Tidy.Rmd)
+- Proposed exercise, Analyze the covid data with the tidyverse, make some plots and analysis (linear model, linear regresion, etc).
+
+## 13/06/2024
+
+ggplot2: Autonomous work using "R Graphical Cookbook".
+
+## 18/06/2024
+
+Machine Learning: Logistic Regression
+
+## Slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W10C1.pdf)
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/Logistic_regression.Rmd)
+
+## Additional Material
+
+Book: Machine Learning with R
+
+## 20/06/2024
+
+Holydays
+
+## 25/06 
+
+## 27/06
+
+## 18/07
+
+## 25/07
 
