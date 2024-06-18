@@ -1,0 +1,177 @@
+---
+title: "Machine_learning_with_R_Logistic_regression"
+author: "Alex Di Genova"
+date: "10/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+#install.packages("mlr")
+library(mlr)
+#install.packages("titanic")
+library(knitr)
+
+```
+
+## Logistic regression
+
+This is a notebook to work with machine learning whithin the R environment.
+We will study the logistic regression in this notebook.
+let load some data
+```{r cars}
+data(titanic_train,package ="titanic")
+titanic_tib=as_tibble(titanic_train)
+kable(head(glimpse(titanic_tib)))
+```
+
+## data wranwling
+
+we perform some cleaning operations before building models.
+
+```{r dataw, echo=FALSE}
+tofactor<-c("Survived","Pclass","Sex")
+titaclean<-titanic_train %>%
+  mutate_at(.vars=tofactor,.funs=factor) %>%
+  mutate(FamSize=SibSp+Parch) %>%
+  select(Survived,Pclass,Sex,Age,FamSize,Fare)
+
+#titaclean
+#kable(summarise(titaclean))
+summary(titaclean)
+#profvis(titaclean)
+
+```
+
+## exploring the data with ggplot
+for fast plotting is important to reduce the number of columns, we can achive this with the ***gather*** function, moreover, some ggplot tricks include the use of ***faceting*** (by a variable) and the intelligent use of plot features like ***position*** to display different kind of barplots, finally the ***violin*** plots are also used to explore the data.
+
+```{r eplot}
+#we tidy the dataframe for simple value colums to easily plot with ggplot2
+titanicUntidy <- gather(titaclean, key = "Variable", value = "Value",-Survived)
+
+kable(head(titanicUntidy),caption="head of the untidy data")
+
+
+#plotting numeric variables
+titanicUntidy %>%filter(Variable!="Pclass"&Variable!="Sex") %>%
+  ggplot(aes(Survived,as.numeric(Value),fill=Survived)) +
+  facet_wrap(~Variable,scales="free_y") +
+  geom_violin(draw_quantiles = c(0.25,0.5,0.75))+
+  theme_bw()
+#ploting factors
+titanicUntidy %>%filter(Variable=="Pclass"|Variable=="Sex") %>%
+  ggplot(aes(fill=Survived,Value)) +
+  facet_wrap(~Variable,scales="free") +
+  geom_bar()+
+  theme_bw()
+#library()
+#geom_bar with proportions
+titanicUntidy %>%filter(Variable=="Pclass"|Variable=="Sex") %>%
+  ggplot(aes(fill=Survived,Value)) +
+  facet_wrap(~Variable,scales="free") +
+  geom_bar(position = "fill")+
+  scale_y_continuous(labels=scales::percent) +
+  theme_bw()
+#p2
+
+```
+
+
+## We build the logistic regression model
+A logistic regression model is a surpervised learning algortihm that predicts class membership. it can handle continous and categorial variables. The name come from the use of a logistic function,which is an equation that computes the probability (odds) of a case to belong to one of the classes.
+
+logistic regression models do not handle missing data, therefore we have to impute the missing data for the moment we will just the median or average as replacing when needed. Let's  built or first model.
+### training the model
+```{r b_lg_model}
+#train the model
+#titataks<-makeClassifTask(data=titaclean,target="Survived")
+#logreg<-makeLearner("classif.logreg",predict.type = "prob")
+#this will indicate errors due to missing data
+#logRegModel<-train(logreg,titataks)
+#cat("Number of Age NAs:",sum(is.na(titaclean$Age)))
+#we impute the missing Ages using the average
+imp<-impute(titaclean,cols=list(Age=imputeMean()))
+#cat("Number of Age NAs after imputation:",sum(is.na(imp$Age)))
+#now we try again
+#train the model
+titataks<-makeClassifTask(data=imp$data,target="Survived")
+logreg<-makeLearner("classif.logreg",predict.type = "prob")
+#this will indicate errors due to missing data
+logRegModel<-train(logreg,titataks)
+
+#wrapping the imputation and the learning method
+titataks<-makeClassifTask(data=titaclean,target="Survived")
+logRegWrapper <- makeImputeWrapper("classif.logreg",
+                                   cols = list(Age = imputeMean()))
+
+kFold <- makeResampleDesc(method = "RepCV", folds = 10, reps = 50,
+                          stratify = TRUE)
+
+logRegwithImpute <- resample(logRegWrapper, titataks,
+                             resampling = kFold,
+                             measures = list(acc, fpr, fnr))
+logRegwithImpute
+```
+### Extracting model parameters
+
+Most of these odds ratios are less than 1. An odds ratio less than 1 means an event is less likely to occur. It’s usually easier to interpret these if you divide 1 by them. For example, the odds ratio for surviving if you were male is 0.06, and 1 divided by 0.06 = 16.7. This means that, holding all other variables constant, men were 16.7 times less likely to survive than women.
+
+For factors, we interpret the odds ratio as how much more likely a passenger is to survive, compared to the reference level for that variable.
+```{r playmodel}
+#train the model
+titataks<-makeClassifTask(data=imp$data,target="Survived")
+logreg<-makeLearner("classif.logreg",predict.type = "prob")
+#this will indicate errors due to missing data
+logRegModel<-train(logreg,titataks)
+logRegModelData <- getLearnerModel(logRegModel)
+
+#converting model parameters into odd ratios
+model_odds=exp(cbind(Odds_Ratio = coef(logRegModelData), confint(logRegModelData)))
+#we plot the odds ratios
+as.data.frame(model_odds[2:7,]) %>% rownames_to_column(var = "predictors")%>% ggplot(aes(1/Odds_Ratio,predictors,fill=predictors))+ geom_col() + theme_bw()
+
+#including the confidence intervals 5%
+model_o<-as.data.frame(model_odds[2:7,]) %>% rownames_to_column(var = "predictors")
+colnames(model_o)<-c("predictors","Odds_Ratio","low","high")
+model_o %>% ggplot(aes(x=1/Odds_Ratio,y=predictors,xmin=1/low,xmax=1/high,col=predictors)) + geom_point(size=2)+geom_errorbar(width=0.2)+geom_vline(xintercept=1)+ theme_bw()
+
+```
+Fare and Age predictors are not very informative for the model because if the 95% confidence intervals include the value 1, such as those for the Fare and  Age variables, then this may suggest that this variable isn’t contributing anything.
+
+### making predictions
+Finally we can make predictions with our model when new data is available.
+```{r mpred}
+data(titanic_test, package = "titanic")
+titanicNew <- as_tibble(titanic_test)
+
+titanicNewClean <- titanicNew %>%
+  mutate_at(.vars = c("Sex", "Pclass"), .funs = factor) %>%
+  mutate(FamSize = SibSp + Parch) %>%
+  mutate(Age=if_else(is.na(Age),mean(Age,na.rm=T),Age)) %>%
+  select(Pclass, Sex, Age, Fare, FamSize)
+
+#we save the predictions of the model
+pred=predict(logRegModel, newdata = titanicNewClean)
+#we create a boxplot with the probabilities
+pred$data %>% gather(key=prob,value="value",-response) %>% ggplot(aes(prob,value,fill=prob)) + geom_violin() + theme_bw()
+```
+
+
+### Improving the model
+
+Remove variables with low predictive value and try others ones to improve the model accuracy.
+```{r addingmorevars}
+#removing variables with low predictive value
+
+tofactor<-c("Survived","Pclass","Sex")
+titaclean<-titanic_train %>%
+  mutate_at(.vars=tofactor,.funs=factor) %>%
+  mutate(FamSize=SibSp+Parch) %>%
+  select(Survived,Pclass,Sex,Age,FamSize,Fare)
+
+#titaclean
+#kable(summarise(titaclean))
+summary(titaclean)
+#profvis(titaclean)
+```
