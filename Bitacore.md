@@ -217,9 +217,23 @@ Holydays
 
 ## 25/06 
 
+Machine Learning: Linear Models
+
+## Slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W11C1.pdf)
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/LM.Rmd)
+
 ## 27/06
 
-## 18/07
+## 19/07
+
+1. Control 2
 
 ## 25/07
+
+2. Control recuperativa 
 
