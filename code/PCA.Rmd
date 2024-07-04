@@ -1,0 +1,283 @@
+---
+title: "PCA"
+author: "Alex Di Genova"
+output: rmarkdown::github_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## PCA
+
+### R libraries for PCA
+1. FactoMiner
+2. PCAtools
+3. prcomp
+4. 
+
+### FactoMineR
+
+Functions for computing principal component methods and clustering:
+
+Functions Description:
+
+1. PCA Principal component analysis.
+2. CA Correspondence analysis.
+3. MCA Multiple correspondence analysis. 
+4. FAMD Factor analysis of mixed data. 
+5. MFA Multiple factor analysis.
+6. HCPC Hierarchical clustering on principal components.
+7. dimdesc Dimension description.
+
+### Factoextra
+
+Visualizing dimension reduction analysis outputs
+
+Functions	Description:
+
+1. fviz_eig (or fviz_eigenvalue)	Extract and visualize the eigenvalues/variances of dimensions.
+
+2. fviz_pca	Graph of individuals/variables from the output of Principal Component Analysis (PCA).
+
+3. fviz_ca	Graph of column/row variables from the output of Correspondence Analysis (CA).
+
+4. fviz_mca	Graph of individuals/variables from the output of Multiple Correspondence Analysis (MCA).
+
+5. fviz_mfa	Graph of individuals/variables from the output of Multiple Factor Analysis (MFA).
+
+6. fviz_famd	Graph of individuals/variables from the output of Factor Analysis of Mixed Data (FAMD).
+
+7. fviz_hmfa	Graph of individuals/variables from the output of Hierarchical Multiple Factor Analysis (HMFA).
+
+8. fviz_ellipses	Draw confidence ellipses around the categories.
+
+9. fviz_cos2	Visualize the quality of representation of the row/column variable from the results of PCA, CA, MCA functions.
+
+10. fviz_contrib	Visualize the contributions of row/column elements from the results of PCA, CA, MCA functions.
+
+```{r pca}
+# install.packages("factoextra")
+# install.packages("FactoMineR") 
+library("FactoMineR") # compute principal component methods
+library("factoextra") # for extracting, visualizing and interpreting the results.
+```
+
+## Data set 1
+
+The data used here describes athletes' performance during two sporting events (Desctar and OlympicG). It contains 27 individuals (athletes) described by 13 variables.
+
+1. Active individuals ( rows 1:23) : Individuals that are used during the principal component analysis.
+
+2. Supplementary individuals ( rows 24:27) : The coordinates of these individuals will be predicted using the PCA information and parameters obtained with active individuals/variables
+
+3. Active variables ( columns 1:10) : Variables that are used for the principal component analysis.
+
+4. Supplementary variables: As supplementary individuals, the coordinates of these variables will
+be predicted also. These can be:
+
+5. Supplementary continuous variables: Columns 11 and 12 corresponding respectively to the rank and the points of athletes.
+
+6. Supplementary qualitative variables: Column 13 corresponding to the two athletetic meetings (2004 Olympic Game or 2004 Decastar). This is a categorical (or factor) variable factor. It can be used to color individuals by groups.
+ 
+```{r data}
+data(decathlon2) # 27 x 13
+head(decathlon2)
+
+decathlon2.active <- decathlon2[1:23, 1:10]
+head(decathlon2.active)
+```
+
+## Computing PCA
+
+
+PCA(X, 
+
+scale.unit = TRUE,  # a boolean, if TRUE (value set by default) then data are scaled to unit variance
+
+ncp = 5, # number of dimensions kept in the results (by default 5)
+
+ind.sup = NULL,  # a vector indicating the indexes of the supplementary individuals
+
+quanti.sup = NULL, # a vector indicating the indexes of the quantitative supplementary variables
+
+quali.sup = NULL,  # a vector indicating the indexes of the categorical supplementary variables
+
+graph = TRUE, # boolean, if TRUE a graph is displayed
+
+axes = c(1,2) # a length 2 vector specifying the components to plot
+)
+
+```{r pcac}
+library("FactoMineR")
+res.pca <- PCA(decathlon2.active,ncp = 5, graph=FALSE)
+print(res.pca)
+```
+#### getting PCA results
+1. Eigenvalues
+```{r}
+#library("factoextra")
+eig.val <- get_eigenvalue(res.pca)
+eig.val
+```
+An eigenvalue > 1 indicates that PCs account for more variance than accounted by one of the original variables in standardized data. This is commonly used as a cutoff point for which PCs are retained. This holds true only when the data are standardized.
+
+Limit the number of component to that number that accounts for a certain fraction of the total variance. For example, if you are satisfied with 70% of the total variance explained then use the number of components to achieve that.
+
+```{r screeplot}
+fviz_eig(res.pca, addlabels = TRUE, ylim = c(0, 50))
+```
+## Variables
+
+The components of the get_pca_var() can be used in the plot of variables as follow:
+
+1. var$coord: coordinates of variables to create a scatter plot
+2. var$cos2: represents the quality of representation for variables on the factor map. It's calculated as the squared coordinates: var.cos2 = var.coord * var.coord.
+3. var$contrib: contains the contributions (in percentage) of the variables to the principal components. The contribution of a variable (var) to a given principal component is (in percentage) : (var.cos2 * 100) / (total cos2 of the component).
+
+```{r getpcavar}
+var <- get_pca_var(res.pca)
+var
+
+# Coordinates
+head(var$coord)
+# Cos2: quality on the factore map
+head(var$cos2)
+# Contributions to the principal components
+head(var$contrib)
+```
+
+
+### Correlation circle
+
+The correlation between a variable and a principal component (PC) is used as the coordinates of the variable on the PC. 
+
+
+1. Positively correlated variables are grouped together.
+2. Negatively correlated variables are positioned on opposite sides of the plot origin (opposed
+3. The distance between variables and the origin measures the quality of the variables on the factor map. Variables that are away from the origin are well represented on the factor map.
+
+```{r pcavar}
+fviz_pca_var(res.pca,col.var="blue")
+```
+
+
+### Quality of representation
+
+The quality of representation of the variables on factor map is called cos2 (square cosine, squared
+coordinates) 
+
+
+```{r qr}
+head(var$cos2, 4)
+```
+
+correlation
+
+```{r corpcs}
+library("corrplot") 
+corrplot(var$cos2, is.corr=FALSE)
+```
+
+Looking at particular components
+
+```{r cospc}
+# Total cos2 of variables on Dim.1 
+fviz_cos2(res.pca, choice = "var", axes = 1)
+```
+
+1. A high cos2 indicates a good representation of the variable on the principal component. In this case the variable is positioned close to the circumference of the correlation circle.
+
+2. A low cos2 indicates that the variable is not perfectly represented by the PCs. In this case the variable is close to the center of the circle.
+
+```{r cospcacolor}
+# Color by cos2 values: quality on the factor map
+fviz_pca_var(res.pca, col.var = "cos2",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+```
+
+In summary:
+1. The cos2 values are used to estimate the quality of the representation
+2. The closer a variable is to the circle of correlations, the better its representation on the factor map (and the more important it is to interpret these components)
+3. Variables that are closed to the center of the plot are less important for the first components.
+
+
+### Contributions of variables to PCs
+
+The contributions of variables in accounting for the variability in a given principal component are expressed in percentage.
+
+1. Variables that are correlated with PC1 (i.e., Dim.1) and PC2 (i.e., Dim.2) are the most important in explaining the variability in the data set.
+2. Variables that do not correlated with any PC or correlated with the last dimensions are variables with low contribution and might be removed to simplify the overall analysis.
+
+
+```{r, contripca}
+head(var$contrib, 4)
+library("corrplot") 
+corrplot(var$contrib, is.corr=FALSE)
+```
+
+By particular PC
+
+```{r contribpc}
+# Contributions of variables to PC1
+fviz_contrib(res.pca, choice = "var", axes = 1, top = 10)
+```
+
+Coloring by contribution
+
+```{r contribution}
+fviz_pca_var(res.pca, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"))
+```
+
+
+### Dimension description
+
+```{r rdd}
+res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+res.desc$Dim.1
+res.desc$Dim.2
+```
+
+### individuals
+
+```{r, pcares}
+
+fviz_pca_ind(res.pca, col.ind = "cos2", gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),repel = TRUE)
+# Total contribution on PC1 and PC2
+fviz_contrib(res.pca, choice = "ind", axes = 1:2)
+```
+
+
+### biplot
+
+```{r biplot}
+
+fviz_pca_biplot(res.pca, repel = TRUE, col.var = "#2E9FDF", col.ind = "#696969")
+
+```
+
+
+## clustering
+
+```{r}
+library(FactoMineR)
+# Compute PCA with ncp = 3
+res2.pca <- PCA(USArrests, ncp = 3, graph = FALSE)
+res.hcpc <- HCPC(res2.pca, graph = FALSE)
+
+fviz_dend(res.hcpc,
+cex = 0.7, 
+palette = "jco", 
+rect = TRUE, rect_fill = TRUE, 
+rect_border = "jco", 
+labels_track_height = 0.8 # Augment the room for labels
+)
+fviz_cluster(res.hcpc,
+repel = TRUE, # Avoid label overlapping
+show.clust.cent = TRUE, # Show cluster centers
+palette = "jco", # Color palette see ?ggpubr::ggpar 
+ggtheme = theme_minimal(),
+main = "Factor map"
+)
+plot(res.hcpc, choice = "3D.map")
+```
