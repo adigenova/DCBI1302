@@ -229,6 +229,23 @@ Machine Learning: Linear Models
 
 ## 27/06
 
+Machine Learning: PCA
+
+## Slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W11C2.pdf)
+
+## 04/07
+
+Machine Learning: Computing, plotting, and analyzing PCA
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/PCA.Rmd)
+
+
+
+
 ## 19/07
 
 1. Control 2
