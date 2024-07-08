@@ -243,6 +243,18 @@ Machine Learning: Computing, plotting, and analyzing PCA
 
 [code](https://github.com/adigenova/DCBI1302/blob/main/code/PCA.Rmd)
 
+## 05/07
+
+Machine Learning: Random Forest
+
+## slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W12C1.pdf)
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/TrioRF.Rmd)
+
 
 
 
