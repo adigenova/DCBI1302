@@ -1,0 +1,178 @@
+---
+title: "TrioRF"
+author: "Alex Di Genova"
+date: "2022-09-26"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load data
+
+we load the matrix generated with the python code
+
+```{r loadd}
+r=read.table("kidONT.R94.kmers.txt",h=T)
+head(r)
+```
+
+## Real clases
+
+we do add the real class to the data
+
+```{r addclases}
+library(tidyverse)
+r=r %>% mutate(class=if_else(startsWith(id,"K1"),"B","A")) 
+```
+
+## Baseline classification tool
+
+This is how currently is performed the classification of paternal/maternal haplotypes which is based on the hits for each mer.
+
+```{doc}
+def compute_scaling_factors():
+    num_kmers_a = kmers.get_number_kmers_in_set(haplotype_a_kmers)
+    num_kmers_b = kmers.get_number_kmers_in_set(haplotype_b_kmers)
+    max_num_kmers = max(num_kmers_a, num_kmers_b)
+    scaling_factor_a = 1.0 * max_num_kmers / num_kmers_a
+    scaling_factor_b = 1.0 * max_num_kmers / num_kmers_b
+    return scaling_factor_a, scaling_factor_b
+    
+# determine the class
+  hap_a_score = hap_a_count * scaling_factor_a
+  hap_b_score = hap_b_count * scaling_factor_b
+
+   if hap_a_score > hap_b_score:
+     read_bin = "A"
+  
+  elif hap_b_score > hap_a_score:
+        read_bin = "B"
+   else:
+    read_bin = "U"
+   
+```
+
+we do implement the same strategy for R code
+```{r baseline}
+library(caret)
+
+nk_hapa=c(1348958,1548667,1674112,1791266)
+nk_hapb=c(963463,1138714,1262662,1376492)
+sf_a=c(1,1,1,1)
+sf_b=nk_hapa/nk_hapb
+#k_15
+r_k15=r %>% select(id,ha_k15,hb_k15,class) %>% 
+  mutate(scoreA=ha_k15*sf_a[1],scoreB=hb_k15*sf_b[1], classp=if_else(scoreA > scoreB, "A",if_else(scoreA == scoreB, "U","B")))
+r_k15[nrow(r_k15) + 1,] = c("dummy",0,0,"U",0,0,"U")
+mk15=confusionMatrix(factor(r_k15$classp),factor(r_k15$class))
+mk15
+
+r_k18=r %>% select(id,ha_k18,hb_k18,class) %>% 
+  mutate(scoreA=ha_k18*sf_a[2],scoreB=hb_k18*sf_b[2], classp=if_else(scoreA > scoreB, "A",if_else(scoreA == scoreB, "U","B")))
+#we add a dummy class for classification purposes
+r_k18[nrow(r_k18) + 1,] = c("dummy",0,0,"U",0,0,"U")
+mk18=confusionMatrix(factor(r_k18$classp),factor(r_k18$class))
+mk18
+
+#k21 is used in trio-binnig
+
+r_k21=r %>% select(id,ha_k21,hb_k21,class) %>% 
+  mutate(scoreA=ha_k21*sf_a[3],scoreB=hb_k21*sf_b[3], classp=if_else(scoreA > scoreB, "A",if_else(scoreA == scoreB, "U","B")))
+#we add a dummy class for classification purposes
+r_k21[nrow(r_k21) + 1,] = c("dummy",0,0,"U",0,0,"U")
+mk21=confusionMatrix(factor(r_k21$classp),factor(r_k21$class))
+mk21
+
+r_k24=r %>% select(id,ha_k24,hb_k24,class) %>% 
+  mutate(scoreA=ha_k24*sf_a[4],scoreB=hb_k24*sf_b[4], classp=if_else(scoreA > scoreB, "A",if_else(scoreA == scoreB, "U","B")))
+#we add a dummy class for classification purposes
+r_k24[nrow(r_k24) + 1,] = c("dummy",0,0,"U",0,0,"U")
+mk24=confusionMatrix(factor(r_k24$classp),factor(r_k24$class))
+mk24
+```
+
+
+
+
+## Random forest classifier
+### model build
+```{r randomf}
+library(randomForest)
+library(caret)
+library(e1071)
+library(caTools)
+
+feats=colnames(r)[2:length(r)]
+rs=r[,feats]
+ca=r[r$class=="A",]
+cb=r[r$class=="B",]
+ca=ca[sample(nrow(cb),nrow(cb)),]
+rs=rbind(ca,cb)
+rs=r[,feats]
+
+rs$class=factor(rs$class)
+sample = sample.split(rs$class, SplitRatio = 0.75)
+train = subset(rs, sample == TRUE) # 75% training
+test  = subset(rs, sample == FALSE) # 25% for evaluation
+dim(train)
+dim(test)
+rf <- randomForest(
+  class ~ .,
+  #importance=T,
+  data=train,
+  keep.forest = TRUE
+  )
+```
+### model evaluation
+
+```{r randomeval, fig.width=6, fig.height=6}
+#we make the predictions
+pred = predict(rf, newdata=test)
+m=confusionMatrix(pred, test$class)
+
+varImpPlot(rf,main="Importance of features")
+```
+
+we build a consolidate plot by k-mer, random forest and class
+
+```{r code}
+library(knitr)
+s=mk15$byClass[,5:7]
+s=rbind(s,mk18$byClass[,5:7])
+s=rbind(s,mk21$byClass[,5:7])
+s=rbind(s,mk24$byClass[,5:7])
+s=rbind(s,m$byClass[5:7])
+s=rbind(s,m$byClass[5:7])
+sd=as.data.frame(s)
+sd$k=c(rep(15,3),rep(18,3),rep(21,3),rep(24,3),rep("rf",2))
+sd$class=c(rep(c("Paternal","Maternal","U"),4),c("Paternal","Maternal"))
+kable(sd,caption = "Precision, recall and F1 for haplotype classifiers")
+```
+
+we make the plots
+
+```{r plots, fig.width=10, fig.height=6}
+library(patchwork)
+p1=sd %>% filter(class != "U") %>% ggplot(aes(y=Precision, x=factor(k),fill=class)) + 
+  geom_col(position="dodge2") +
+  xlab("classifier: k-mer and RF")+
+  theme_minimal() +
+  coord_cartesian(ylim = c(0.95, 1))
+p2=sd %>% filter(class != "U") %>% ggplot(aes(y=Recall, x=factor(k),fill=class)) +
+  geom_col(position="dodge2")  +
+  xlab("classifier: k-mer and RF")+
+  theme_minimal()+ 
+  coord_cartesian(ylim = c(0.9, 1))
+# we merge plots
+p1+p2+plot_layout(guides = 'collect') & theme(text = element_text(size = 20)) 
+
+```
+
+
+# R info
+
+```{r}
+devtools::session_info()
+```
