@@ -255,12 +255,33 @@ Machine Learning: Random Forest
 
 [code](https://github.com/adigenova/DCBI1302/blob/main/code/TrioRF.Rmd)
 
+## 09/07
 
+Machine Learning: Clustering
 
+## slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W12C2.pdf)
+
+## Code
+
+[code](https://github.com/adigenova/DCBI1302/blob/main/code/Clustering.Rmd)
+
+## 11/07
+
+Q&A class
+
+## 16 /07
+
+Holidays
 
 ## 19/07
 
 1. Control 2
+
+## 23/07
+
+No class
 
 ## 25/07
 
