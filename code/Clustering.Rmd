@@ -1,0 +1,235 @@
+---
+title: "Clustering"
+author: "Alex Di Genova"
+output: rmarkdown::github_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## K-means
+```{r kmeans}
+# Load necessary library
+library(ggplot2)
+
+# Create a sample dataset
+set.seed(123) # For reproducibility
+data <- data.frame(
+  x = c(rnorm(50, mean = 1, sd = 0.5), rnorm(50, mean = 5, sd = 0.5)),
+  y = c(rnorm(50, mean = 1, sd = 0.5), rnorm(50, mean = 5, sd = 0.5)),
+   z = c(rnorm(50, mean = 1, sd = 0.5), rnorm(50, mean = 5, sd = 0.5))
+)
+
+# Visualize the data
+ggplot(data, aes(x = x, y = y)) + 
+  geom_point() + 
+  ggtitle("Original Data")
+
+# Apply K-means clustering
+set.seed(123) # For reproducibility
+kmeans_result <- kmeans(data, centers = 2, nstart = 25)
+
+# Add the cluster assignment to the dataset
+data$cluster <- as.factor(kmeans_result$cluster)
+
+# Visualize the clustered data
+ggplot(data, aes(x = x, y = y,z=z, color = cluster)) + 
+  geom_point() + 
+  ggtitle("K-means Clustering Result")
+
+# Print cluster centers
+print(kmeans_result$centers)
+
+```
+
+### in combination with PCA
+
+```{r pcakmeans, echo=FALSE}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(factoextra)
+
+# Load the USArrests dataset
+data("USArrests")
+
+# Standardize the data
+data_scaled <- scale(USArrests)
+
+# Perform PCA
+pca_result <- prcomp(data_scaled, center = TRUE, scale. = FALSE)
+
+# View the proportion of variance explained by each principal component
+summary(pca_result)
+
+# Visualize the variance explained
+fviz_eig(pca_result)
+
+# Extract the first two principal components
+pca_data <- data.frame(pca_result$x[, 1:2])
+
+# Apply K-means clustering on the principal components
+set.seed(123) # For reproducibility
+kmeans_result <- kmeans(pca_data, centers = 3, nstart = 25)
+
+# Add the cluster assignment to the PCA data
+pca_data$cluster <- as.factor(kmeans_result$cluster)
+
+# Visualize the clustered data
+ggplot(pca_data, aes(x = PC1, y = PC2, color = cluster)) + 
+  geom_point(size = 3) + 
+  ggtitle("K-means Clustering on PCA-Reduced USArrests Data") +
+  theme_minimal()
+
+# Print cluster centers
+print(kmeans_result$centers)
+```
+
+
+### Evaluation and visualization
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(factoextra)
+library(cluster)
+library(clusterSim)
+library(clValid)
+
+# Load and standardize the USArrests dataset
+data("USArrests")
+
+# Perform PCA and extract the first two principal components
+pca_result <- prcomp(data_scaled, center = TRUE, scale. = TRUE)
+pca_data <- data.frame(pca_result$x[, 1:2])
+
+# Apply K-means clustering on the principal components
+set.seed(123)
+kmeans_result <- kmeans(pca_data, centers = 4, nstart = 25)
+clusters <- kmeans_result$cluster
+
+# Davies-Bouldin Index
+dbi <- index.DB(pca_data, clusters, centrotypes = "centroids")$DB
+cat("Davies-Bouldin Index:", dbi, "\n")
+
+# Dunn Index
+dunn_index <- dunn(dist(pca_data),clusters)
+cat("Dunn Index:", dunn_index, "\n")
+
+# Pseudo F Statistic
+pseudo_f <- (sum(kmeans_result$betweenss) / (kmeans_result$totss / (nrow(pca_data) - kmeans_result$tot.withinss)))
+cat("Pseudo F Statistic:", pseudo_f, "\n")
+
+#Showing for k-means cluster with clusters = 3
+#The silhouette coefficient contrasts the average distance to elements in the same cluster with the average distance to elements in other clusters. Objects with a high silhouette value are considered well clustered; objects with a low value may be outliers.
+sk <-silhouette(clusters,dist(pca_data))
+plot(sk)
+
+#GGplot plots
+fviz_cluster(kmeans_result,USArrests, ellipse.type = "norm")+
+theme_minimal()
+
+fviz_silhouette(sk) + theme_minimal()
+
+```
+
+# HC
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dendextend)
+
+# Load the USArrests dataset
+data("USArrests")
+
+# Standardize the data
+data_scaled <- scale(USArrests)
+
+# Compute the distance matrix
+dist_matrix <- dist(data_scaled, method = "manhattan")
+
+# Perform hierarchical clustering using complete linkage
+hc_complete <- hclust(dist_matrix, method = "complete")
+
+# Plot the dendrogram
+plot(hc_complete, main = "Dendrogram for USArrests (Complete Linkage)", xlab = "", sub = "", cex = 0.9)
+
+# Cut the dendrogram to form clusters
+cutree_res <- cutree(hc_complete, k = 4) # Cut the dendrogram into 4 clusters
+
+# Visualize the clusters on a scatter plot of the first two principal components
+pca_result <- prcomp(data_scaled)
+pca_data <- data.frame(pca_result$x[, 1:2])
+pca_data$cluster <- as.factor(cutree_res)
+
+ggplot(pca_data, aes(x = PC1, y = PC2, color = cluster)) + 
+  geom_point(size = 3) + 
+  ggtitle("Hierarchical Clustering on PCA-Reduced USArrests Data (Complete Linkage)") +
+  theme_minimal()
+```
+
+
+### Evaluation example
+
+```{r}
+# Load necessary libraries
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(clusterSim)
+
+# Load the USArrests dataset
+data("USArrests")
+
+# Standardize the data
+data_scaled <- scale(USArrests)
+
+# Compute the distance matrix
+dist_matrix <- dist(data_scaled, method = "minkowski")
+
+# Perform hierarchical clustering using complete linkage
+hc_complete <- hclust(dist_matrix, method = "complete")
+
+# Cut the dendrogram to form clusters
+cutree_res <- cutree(hc_complete, k = 4) # Cut the dendrogram into 4 clusters
+
+# Add the cluster assignment to the original data
+USArrests$cluster <- as.factor(cutree_res)
+
+# Visualize the dendrogram
+dend <- as.dendrogram(hc_complete)
+dend <- color_branches(dend, k = 4)
+plot(dend, main = "Dendrogram for USArrests (Complete Linkage)", xlab = "", sub = "", cex = 0.9)
+
+# Perform PCA for visualization
+pca_result <- prcomp(data_scaled)
+pca_data <- data.frame(pca_result$x[, 1:2])
+pca_data$cluster <- as.factor(cutree_res)
+
+# Visualize the clusters on a scatter plot of the first two principal components
+ggplot(pca_data, aes(x = PC1, y = PC2, color = cluster)) + 
+  geom_point(size = 3) + 
+  ggtitle("Hierarchical Clustering on PCA-Reduced USArrests Data (Complete Linkage)") +
+  theme_minimal()
+
+# Evaluate clustering with silhouette score
+sil <- silhouette(cutree_res, dist_matrix)
+fviz_silhouette(sil)
+
+# Print average silhouette width
+cat("Average silhouette width:", mean(sil[, 3]), "\n")
+
+# Compute Dunn Index
+dunn_index <- dunn(clusters = cutree_res, Data = dist_matrix)
+cat("Dunn Index:", dunn_index, "\n")
+
+# Compute Davies-Bouldin Index
+dbi <- index.DB(data_scaled, cutree_res, centrotypes = "centroids")$DB
+cat("Davies-Bouldin Index:", dbi, "\n")
+
+```
