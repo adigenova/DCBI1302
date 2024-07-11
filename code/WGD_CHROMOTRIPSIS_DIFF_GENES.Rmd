@@ -1,0 +1,1015 @@
+---
+title: "WGD_CHROMOTRIPSIS_DIFF_GENES"
+author: "Alex Di Genova"
+date: "7/23/2021"
+output:
+  html_notebook: default
+  html_document:
+    number_sections: yes
+    toc: yes
+    code_folding: hide
+#output: html_document
+---
+
+## library and packages
+we load the required libraries and packages
+
+```{r loadlib}
+source("lm_utils.R")
+source("lm_expression_with_cnv.R")
+library(ggplot2)
+library(magrittr)
+library(knitr)
+library(kableExtra)
+library(ggrepel)
+library(hypeR)
+#devtools::install_github("montilab/hypeR")
+library(stringr)
+library(circlize)
+library(ComplexHeatmap)
+library(metap)
+library(limma)
+#BiocManager::install("limma")
+```
+
+## load data
+
+we load the required data, namely local CNVs, gene expression and purity information for our samples
+
+```{r pressure, echo=FALSE}
+#plot(pressure)
+Data_Sharing = read.xlsx("../data/Sample_information/SupplementaryTable1-SamplesOverview.xlsx",sheet = 1 ,startRow = 2)
+# expression data 
+#normalized data
+#load("/data/gcs/mesomics/work/mangiantel/MOFA/MOFA_RNA.Meth/vstexpr_nosex.RData")
+#TMP or FKM data
+load("/data/gcs/mesomics/files/RNAseq/quantification/release2_allsamples_14092020/Robjects/gene_1pass.SE.rda")
+# CNV data 115 genomes
+cnv_seg_gistiv=read.table("/data/gcs/mesomics/work/digenovaa/CNV_Calling/29032021/GISTIC2/mesomics/meso_gistic_all_segments.tsv",h=T)
+# purity and ploidy and WGS 
+m=read.table("/data/gcs/mesomics/work/digenovaa/CNV_Calling/29032021/CALLS-RESUME/mesomics.matched.purity.purple.tsv",h=T)
+t=read.table("/data/gcs/mesomics/work/digenovaa/CNV_Calling/29032021/CALLS-RESUME/mesomics.tonly.purity.purple.tsv",h=T)
+meso_purity_ploidy_wgd=rbind(m,t)
+meso_purity_ploidy_wgd=meso_purity_ploidy_wgd %>% filter(sample %in% Data_Sharing$Cohort) %>% dplyr::select(sample,purity,ploidy,wholeGenomeDuplication)
+#we check that the 115 samples are ok
+#length(intersect(meso_purity_ploidy_wgd$sample,unique(cnv_seg_gistiv$sample)))
+gencode=read.table("/home/digenovaa/mesomics/Rnotebooks/mesomics/manuscript_desc/data/GENE_MODELS/gencode.v33.annotation.genes.bed.gz")
+colnames(gencode)=c("chr","start","end","strand","ensid","type","hugo")
+#we keep only the protein coding genes
+gencode=gencode %>% filter(type=="protein_coding")
+
+```
+
+## prepare data for analysis
+
+Now we make some data manipulations to perform the analysis (merge gene expresion and purity and copy number)
+```{r datamanip, echo=FALSE}
+#we just keep autosomes
+gencode=gencode %>% mutate(chr=sub("chr","",chr)) %>% filter(chr %in% 1:22) 
+#get expression matrix in TPM values
+meso_rnaseq_tpm=assay(gene_1pass.SE,"abundance_TPM")
+#we filter protein coding genes
+b=intersect(gencode$ensid,rownames(meso_rnaseq_tpm))
+meso_rnaseq_tpm=meso_rnaseq_tpm[b,]
+gencode=gencode %>% filter(ensid %in% b)
+#we select the samples with expression
+b=colnames(meso_rnaseq_tpm) %in% meso_purity_ploidy_wgd$sample
+meso_rnaseq_tpm=meso_rnaseq_tpm[,b]
+meso_purity_ploidy_wgd=meso_purity_ploidy_wgd %>% filter(sample %in% colnames(meso_rnaseq_tpm))
+cnv_seg_gistiv = cnv_seg_gistiv %>% filter(sample %in% colnames(meso_rnaseq_tpm))
+
+#we create the gendata 
+
+# we create the CNV matrix at gene level
+cnv_by_gene=data.frame(g=gencode$ensid)
+# list of genes
+genes_db=makeGRangesFromDataFrame(gencode,keep.extra.columns=T,
+                               seqnames.field = "chr",
+                               start.field = "start",
+                               end.field = "end")
+
+#to keep the same order of colums as in rna_seq_expression
+samples_select=colnames(meso_rnaseq_tpm)
+
+for(i in samples_select){
+#cnv data per genome
+test=cnv_seg_gistiv %>% filter(sample == i)
+#overlaps
+cnvs=makeGRangesFromDataFrame(test,keep.extra.columns=T,
+                               seqnames.field = "chromosome",
+                               start.field = "start",
+                               end.field = "end")
+ovl1=findOverlaps(genes_db,cnvs,type=c("any"),select=("first"))
+b=test[ovl1,]$copyNumber
+cnv_by_gene=cbind(cnv_by_gene,b)
+}
+colnames(cnv_by_gene)=c("ensid",samples_select)
+#we get the lenght of the different matrix
+rownames(cnv_by_gene)=cnv_by_gene$ensid
+cnv_by_gene=cnv_by_gene[,-1]
+
+dim(cnv_by_gene)
+dim(meso_rnaseq_tpm)
+dim(meso_purity_ploidy_wgd)
+#we set the WGD status
+meso_purity_ploidy_wgd$WGD_Status = factor(ifelse(meso_purity_ploidy_wgd$wholeGenomeDuplication=="true", "Yes", "No"), levels = c("No", "Yes"))
+```
+
+# Association of expression with WGS status 
+We will identify genes that are differentially expressed with respect to WGD status while controlling for purity and local copy number.
+
+```{r diffcvnpur}
+cnv_by_gene=as.matrix(cnv_by_gene)
+meso_rnaseq_tpm=as.matrix(meso_rnaseq_tpm)
+covars = meso_purity_ploidy_wgd[,c("WGD_Status", "purity")]
+rownames(covars)=meso_purity_ploidy_wgd$sample
+#we order to the 
+covars = covars[colnames(meso_rnaseq_tpm),]
+
+
+#data = cbind(Expression=meso_rnaseq_tpm[1,], CNV=cnv_by_gene[1,], covars)
+
+
+
+# data = cbind(Expression=meso_rnaseq_tpm[1,], CNV=cnv_by_gene[1,], covars)
+# #data
+# var.names = c("Expression", "CNV", colnames(covars))
+# form = as.formula(paste0("Expression ~ CNV + ", paste(colnames(covars), collapse = "+")))
+# error = try({
+#     model = lm(formula = form, data = data)
+#     }, silent = TRUE)
+    
+
+#model = lm(formula = form, data = data)
+
+#we test all the genes
+
+var.names = c("Expression", "CNV", colnames(covars))
+  form = as.formula(paste0("Expression ~ CNV + ", paste(colnames(covars), collapse = "+")))
+  coef = c()
+  sterr = c()
+  pval = c()
+  tstat = c()
+  for(i in 1:nrow(meso_rnaseq_tpm)) {
+    data = cbind(Expression=meso_rnaseq_tpm[i,], CNV=cnv_by_gene[i,], covars)
+    error = try({
+    model = lm(formula = form, data = data)
+    }, silent = TRUE)
+    
+    if(class(error) == "try-error") {
+     coef = cbind(coef, NA)
+      sterr = cbind(sterr, NA)
+      tstat = cbind(tstat, NA)
+      pval = cbind(pval, NA)
+      
+    } else {
+      s = summary(model)$coefficients  
+      coef = cbind(coef, s[,1])
+      sterr = cbind(sterr, s[,2])
+        tstat = cbind(tstat, s[,3])
+      pval = cbind(pval, s[,4])
+    }
+    
+    if(i %% 1000 == 0) {
+      cat("Analysis of", i, "genes completed\n")
+    }
+  }
+  
+   fdr = apply(pval, 1, p.adjust, method="fdr")
+  rownames(coef) = paste0(var.names, "_Estimate")
+  rownames(sterr) = paste0(var.names, "_StdError")
+  rownames(tstat) = paste0(var.names, "_Tstat")
+  rownames(pval) = paste0(var.names, "_Pvalue")
+  colnames(fdr) = paste0(var.names, "_FDR")
+  
+  result = data.frame(Gene = rownames(meso_rnaseq_tpm),
+                      t(coef),t(sterr),t(tstat),t(pval),fdr)
+  
+   fn = paste0("MESOMICS_LM_Exp_tilde_CNV_WGD_Purity_", i, ".txt.gz")
+   write.table(result, gzfile(fn), row.names=FALSE, sep="\t", quote = FALSE)
+  
+```
+
+# Generate Heatmaps
+
+A heatmap for the top 50 up- and down-regulated genes using the `ComplexHeatmap` package. 
+
+```{r heatmaps, results="asis"}
+n.show = 50
+
+# Set up column color bars
+purity_col = colorRamp2(c(0, 25, 50, 75, 100)/100, c("blue", "green", "yellow", "orange", "red"))
+wgd_order=meso_purity_ploidy_wgd %>% arrange(WGD_Status) %>% select(sample)
+# Set up row color bars
+set.seed(123)
+#cnv.col = sample(colors(distinct = TRUE), 22)
+#names(cnv.col) = levels(cnv.info.overlap$Chrom)
+
+#for(i in names(result)) {
+ # ix = tumor.type == i
+  deg.list = c()
+  up = subset(result, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+  if(nrow(up) > 0) {
+    up.o = up[order(up$WGD_Status_Estimate, decreasing = TRUE),]
+    deg.list = c(deg.list, head(as.character(up.o[,1]), n.show))
+  }
+  
+  down = subset(result, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+  if(nrow(down) > 0) {
+    down.o = down[order(down$WGD_Status_Estimate, decreasing = FALSE),]
+    deg.list = c(deg.list, head(as.character(down.o[,1]), n.show))
+  }
+  
+  # Subset and scale data
+  deg.data = t(scale(t(meso_rnaseq_tpm[deg.list,])))
+  deg.data[deg.data < -2] = -2
+  deg.data[deg.data > 2] = 2
+
+  column_ha = HeatmapAnnotation(df = covars[,c("WGD_Status", 
+                                                           "purity")],
+                              col = list(purity = purity_col,
+                                          WGD_Status = c("Yes" = "black",
+                                                        "No" = "White")))
+
+  #row_ha = rowAnnotation(df=cnv_by_gene[rownames(deg.data),],)
+                       #col=list(Chrom=cnv.col))
+  
+  #cat(paste0('## ', i, ' \n\n'))
+  draw(Heatmap(deg.data, 
+          show_column_names = FALSE,
+          top_annotation = column_ha,
+          column_order = wgd_order$sample,
+          #left_annotation = row_ha,
+          row_names_gp = gpar(fontsize=5)
+          #,
+          #use_raster = TRUE)
+       )
+  #cat(' \n\n')
+#}
+
+```
+
+# We check some up/down regulated genes
+
+```{r plottop}
+
+g1=up.o[1,c("Gene")]
+#WGD group 1
+#gr1=meso_purity_ploidy_wgd %>% filter(WGD_Status =="Yes") %>% select(sample)
+#WGD group 2  
+#gr2=meso_purity_ploidy_wgd %>% filter(WGD_Status =="No") %>% select(sample)
+data = cbind(Expression=meso_rnaseq_tpm[g1,], CNV=cnv_by_gene[g1,], covars)
+boxplot(log(data$Expression)~data$WGD_Status)
+
+```
+
+# Boxplot plot for showing B2M
+
+```{r boxplot}
+meso_de=read.table("MESOMICS_LM_Exp_tilde_CNV_WGD_Purity_1126.txt.gz",h=T)
+wgd_list=covars %>% filter(WGD_Status=="Yes") %>% rownames()
+id2name=gencode %>% select(ensid,hugo)
+rownames(id2name)=id2name$ensid
+
+n.show=10
+down = subset(meso_de, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+down.o = down[order(down$WGD_Status_Estimate, decreasing = FALSE),]
+
+deg.list = c()
+down.list = c(deg.list, head(as.character(down.o[,1]), n.show))
+#gencode[gencode$ensid %in% down.list,c("hugo")]
+down_tible=bind_cols(tibble(gene=rownames(t(meso_rnaseq_tpm[down.list,]))), as_tibble(t(meso_rnaseq_tpm[down.list,])) ) %>% pivot_longer(cols=down.list)
+down_tible=down_tible %>%mutate(WGD=ifelse(gene %in% wgd_list, "YES","NO"))
+down_tible=left_join(down_tible,id2name,by=c("name"="ensid"))
+
+#we keep the order for gene names
+down_tible$name=factor(down_tible$name,levels = down.list)
+down_tible$hugo=factor(down_tible$hugo,levels = id2name[down.list,]$hugo)
+
+
+
+up = subset(meso_de, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+up.o = up[order(up$WGD_Status_Estimate, decreasing = TRUE),]
+
+deg.list = c()
+up.list = c(deg.list, head(as.character(up.o[,1]), n.show))
+#gencode[gencode$ensid %in% down.list,c("hugo")]
+up_tible=bind_cols(tibble(gene=rownames(t(meso_rnaseq_tpm[up.list,]))), as_tibble(t(meso_rnaseq_tpm[up.list,])) ) %>% pivot_longer(cols=up.list)
+up_tible=up_tible %>%mutate(WGD=ifelse(gene %in% wgd_list, "YES","NO"))
+up_tible=left_join(up_tible,id2name,by=c("name"="ensid"))
+#up_tible$name=factor(up_tible$name,levels = up.list)
+#we keep the order for gene names
+up_tible$name=factor(up_tible$name,levels = up.list)
+up_tible$hugo=factor(up_tible$hugo,levels = id2name[up.list,]$hugo)
+
+
+#plot down regulated top5 genes 
+pdow<-ggplot(down_tible, aes(x=hugo, y=log(value), fill=WGD)) + 
+    geom_boxplot()+ 
+    theme_classic()+
+     ylab("log(TPM)")+
+    xlab("Genes")+ 
+ ggtitle("Top 10 Down-regulated WGD genes") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+pdow
+pdf("WGD_top10_downregulated.pdf",5,4)
+pdow
+dev.off()
+
+#plot up regulated top5 genes
+# ggplot(up_tible, aes(x=hugo, y=log(value), fill=WGD)) + 
+#     geom_boxplot()+ 
+#     theme_classic()+
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+# 
+# #merge both sets
+# up_tible$Regulated<-"UP"
+# down_tible$Regulated<-"DOWN"
+# updown_tibble=rbind(up_tible,down_tible)
+# 
+# ggplot(updown_tibble, aes(x=name, y=log(value), fill=WGD)) + 
+#     geom_boxplot()+ 
+#     theme_classic()+
+#     ylab("log(TPM)")+
+#     xlab("Ensembl Genes")+ 
+#     #coord_flip()+
+#   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+#   facet_wrap(~Regulated,scale="free")
+
+
+```
+
+# Perform functional enrichment  {.tabset .tabset-fade}
+Functional enrichment using the hypeR package will identify classes of genes enriched in genes associated with WGD status in mesothelioma. We will use Hallmark gene sets (H) from MSigDB. We will examine genes with FDR < 0.05 with respect to WGD status in mesothelioma. Functional enrichment is performed separately for up and down-regulated genes.
+
+```{r enrichment}
+#load hallmark of geneset
+hallmark = msigdb_gsets(species="Homo sapiens", category="H")
+gs = hallmark
+up = subset(result, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+
+up_genename=gencode[gencode$ensid %in% up$Gene,c("hugo")]
+up.enrich = hypeR(up_genename, gs)
+hyp_to_table(up.enrich, file_path = "WGD_up_regulated_enrichment.txt")
+
+down = subset(result, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+down_genename=gencode[gencode$ensid %in% down$Gene,c("hugo")]
+down.enrich = hypeR(down_genename, gs)
+hyp_to_table(down.enrich, file_path = "WGD_down_regulated_enrichment.txt")
+
+
+#hyp_emap(up.enrich)
+#
+upplot=hyp_dots(up.enrich, fdr=0.05, val="fdr") + ggtitle("Up-regulated WGD genes (178)")  + theme_classic()
+downplot=hyp_dots(down.enrich,fdr=0.05, val="fdr") + ggtitle("Down-regulated WGD genes (2710)")  + theme_classic()
+pdf("WGD_up_down_hallmark_pathways.pdf",width=15)
+upplot | downplot
+dev.off()
+upplot | downplot
+
+#hyp_hmap(down.enrich)
+#hyp_to_rmd(up.enrich,
+#           file_path="hypeR.rmd",
+#           title="Hyper Enrichment (hypeR)",
+#           subtitle="MEsomics WGD status",
+#           author="Alex Di Genova")
+#hyp_dots(up.enrich, fdr=0.05, val="fdr", merge=TRUE, main="Up_regulated") | hyp_dots(down.enrich,fdr=0.05, val="fdr", main="Down_regulated")
+
+ cat(paste0('## ', i, ' {.tabset} \n\n'))
+  cat(paste0('### Up \n\n'))
+  
+  d = subset(up.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+  
+  cat('\n\n')
+  cat(paste0('### Down \n\n'))
+  
+  d = subset(down.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+
+```
+
+# Create up/Down WGD table for Mesomics
+```{r updown}
+meso_de=read.table("MESOMICS_LM_Exp_tilde_CNV_WGD_Purity_1126.txt.gz",h=T)
+down = subset(meso_de, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+up = subset(meso_de, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+up$State="Up-Regulated"
+down$State="Down-Regulated"
+updown=rbind(up,down)
+write.table(updown, "Supplemetary_Tables/MESOMICS_WGD_UPDOWN_GENES.txt", row.names=FALSE, sep="\t", quote = FALSE)
+```
+
+# Create WGD, NEAR haploid table
+```{r wgdnhr}
+wgd_gnh=meso_purity_ploidy_wgd %>% 
+  filter(WGD_Status == "Yes" | sample == "MESO_108_T") %>% 
+  select(sample, purity, ploidy,wholeGenomeDuplication) %>%mutate(Status=ifelse(wholeGenomeDuplication=="true","WGD+","GNH")) %>% 
+  select(sample, purity, ploidy,Status) %>% arrange(Status,ploidy,purity)
+#MESOMICS WGD
+write.table(wgd_gnh, "Supplemetary_Tables/MESOMICS_WGD_GNH_samples.txt", row.names=FALSE, sep="\t", quote = FALSE)
+```
+
+# update enrichment plot
+
+```{r enrichplot}
+
+reverselog_trans_enrich <- function(base=exp(1)) {
+    trans <- function(x) -log(x, base)
+    inv <- function(x) base^(-x)
+    scales::trans_new(paste0("reverselog-", format(base)), trans, inv, 
+              scales::log_breaks(base=base), 
+              domain=c(1e-100, Inf))
+}
+
+
+dots_plot_enrichment <- function(hyp_df,
+                       top=20,
+                       abrv=50,
+                       sizes=TRUE,
+                       pval_cutoff=1, 
+                       fdr_cutoff=1,
+                       val=c("fdr", "pval"),
+                       title="") {
+    
+    # Default arguments
+    val <- match.arg(val)
+
+    # Subset results
+    df <- hyp_df %>%
+          dplyr::filter(pval <= pval_cutoff) %>%
+          dplyr::filter(fdr <= fdr_cutoff) %>%
+          purrr::when(!is.null(top) ~ head(., top), ~ .)
+
+    # Handle empty dataframes
+    if (nrow(df) == 0) return(ggempty())
+
+    # Plotting variables
+    df$significance <- df[,val]
+    df$size <- if(sizes) df$geneset else 1
+
+    # Order by significance value
+    df <- df[order(-df[,val]),]
+    
+    # Abbreviate labels
+    label.abrv <- substr(df$label, 1, abrv)
+    if (any(duplicated(label.abrv))) {
+        stop("Non-unique labels after abbreviating")
+    } else {
+        df$label.abrv <- factor(label.abrv, levels=label.abrv)   
+    }
+
+    if (val == "pval") {
+        color.label <- "P-Value"
+    }
+    if (val == "fdr") {
+        color.label <- "q-value"
+    }
+
+    #ggplot(df, aes(x=label.abrv, y=significance, color=significance, size=log10(size))) +
+      ggplot(df, aes(x=label.abrv, y=significance, color=significance, size=size)) +
+    geom_point() +
+    labs(title=title, y=color.label, color=color.label,size="Gene set") +
+    scale_color_continuous(low="#E53935", high="#114357", guide=guide_colorbar(reverse=TRUE),limits=c(0,0.05)) +
+    #scale_size_continuous(guide=guide_legend(),limits=c(1.5,2.5))  +
+    scale_size_continuous(guide=guide_legend(),limits=c(30,200))  +
+      #scale_color_manual(breaks = c(0.05, 0.01, 0,001),
+       #                 values=c("#E53935", "blue", "#114357"))
+    coord_flip() +
+    scale_y_continuous(trans=reverselog_trans_enrich(10)) +
+    geom_hline(yintercept=0.05, linetype="dotted") +
+    #guides(size="none") + 
+      
+    xlab("")+  
+    theme(plot.title=element_text(hjust=0.5),
+          axis.title.y=element_blank())
+}
+
+
+#' Custom reverse log transformation of continous ggplot axes
+#'
+
+
+
+#setwd("/home/digenovaa/mesomics/Rnotebooks/mesomics/manuscript_desc/Figures")
+pup=read.table("WGD_up_regulated_enrichment.txt",h=T,sep="\t")
+pdown=read.table("WGD_down_regulated_enrichment.txt",h=T,sep="\t")
+pup$label=gsub("HALLMARK_","",pup$label)
+pdown$label=gsub("HALLMARK_","",pdown$label)
+#pup=pup[pup$fdr<0.05,]
+#pdown=pdown[pdown$fdr<0.05,]
+p1<-dots_plot_enrichment(pup,val="fdr",fdr_cutoff = 0.05,title="Up-regulated (178 genes)")+theme_classic(base_size = 16)
+p2<-dots_plot_enrichment(pdown,val="fdr",fdr=0.05,title="Down-regulated (2710 genes)")+ theme_classic(base_size = 16)
+merged_plot=p1+p2+plot_layout(guides = "collect")+ plot_annotation(title = 'Pathways enrichment analysis of WGD+ vs WGD- MPM samples',theme = theme(plot.title = element_text(size = 18)))
+pdf(file="combined_up_down_patways.pdf",width=14,height=7)
+merged_plot
+dev.off()
+
+ggsave(file="FIGURE5B.svg", plot=merged_plot, width=14,height=7)
+#+plot_layout(guides = "collect") & theme(legend.position = "right")
+
+#ggplot(pup,aes(x=label,y=desc(-fdr),size=log10(geneset))) +
+ # geom_point()
+    #ggplot(data=pup, aes(x=signature, y=label, color=significance, size=size)) +
+ #color.label <- "FDR"
+  #ggplot(pup, aes(x=label, y=fdr, color=fdr, size=log10(geneset))) +
+   # geom_point() +
+    #labs(title=title, y=color.label, color=color.label) 
+  #+
+    #scale_color_continuous(low="#E53935", high="#114357", guide=guide_colorbar(reverse=TRUE)) +
+    #coord_flip() +
+    #scale_y_continuous(trans=.reverselog_trans(10)) +
+    #geom_hline(yintercept=0.05, linetype="dotted") +
+    #guides(size="none") + 
+    #theme(plot.title=element_text(hjust=0.5),
+     #     axis.title.y=element_blank())
+
+```
+
+# WGD genes with Bueno data
+
+load bueno data
+
+```{r loadbueno}
+
+
+#library(readxl)
+#read names of meso data
+bueno_excel="/home/digenovaa/mesomics/Rnotebooks/mesomics/manuscript_desc/data/Bueno/Metadata-41588_2016_BFng3520_MOESM229_ESM.xlsx"
+bueno_info=read.xlsx(bueno_excel,sheet = 2 ,startRow = 2)
+bueno_info=bueno_info %>% select(Tumor.ID,DNA.Tumor.ID,RNA.Tumor.ID)
+
+#cnv data bueno
+bueno_pur=read.delim("/data/gcs/mesomics/files/Public_Data/WES/Bueno_NatGenet_2016/out_facets_min_read_20/facets_summary_stats.txt",h=T,sep="\t")
+path_t="/data/gcs/mesomics/files/Public_Data/WES/Bueno_NatGenet_2016/out_facets_min_read_20/all_facets_stats"
+#we load the segments files
+bueno_cnv_files=list.files(path=path_t,pattern="*_BQSRecalibrated.csv.gz_CNV.txt",recursive=TRUE)
+p_p=paste0(path_t,"/",bueno_cnv_files)
+bueno_cnv_list = lapply(p_p, read.delim)
+l=str_split(bueno_cnv_files, "_")
+bueno_ids=sapply(l, "[[", 6)
+#bueno_ids=data.frame(file=bueno_cnv_files, id=sapply(l, "[[", 2))
+#bueno_ids$file=gsub(".csv.gz_CNV.txt","",bueno_ids$file)
+#we load the bueno data to count samples with 10 or more 
+facets_bueno=Map(cbind, bueno_cnv_list, sample = bueno_ids)
+#we merge the table
+facets_bueno_all=do.call(rbind,facets_bueno) #merge
+
+l=str_split(bueno_pur$Sample, "_")
+bueno_ids=sapply(l, "[[", 6)
+bueno_pur=cbind(bueno_pur, ids=bueno_ids)
+
+# WholeGenomeDuplication        true    True if more than 10 autosomes have major allele copy number > 1.5
+#facets_bueno_all=facets_bueno_all %>% select(chrom,tcn.em,lcn.em,start,end,sample) %>%filter(tcn.em-lcn.em > 1.5)
+
+#we load transcriptomic data from bueno TMP samples
+#TMP or FKM data
+load("/data/gcs/mesomics/files/Public_Data/RNAseq/Bueno_NatGenet_2016/quantification/release2_18062020/Robjects/gene_1pass.SE.rda")
+
+bueno_rnaseq_tpm=assay(gene_1pass.SE,"abundance_TPM")
+
+#we match the data 
+bueno_pur=bueno_pur %>% filter(!is.na(purity )) %>%select(purity,ploidy,ids)
+#we filter the samples with exome data
+bueno_info=bueno_info %>% filter(DNA.Tumor.ID %in% bueno_pur$ids)
+rownames(bueno_pur)=bueno_pur$ids
+#we filter samples with rnaseq data
+bueno_info= bueno_info %>% filter(Tumor.ID %in% colnames(bueno_rnaseq_tpm))
+bueno_pur=bueno_pur %>% filter(ids %in% bueno_info$DNA.Tumor.ID)
+bueno_rnaseq_tpm=bueno_rnaseq_tpm[,bueno_info$Tumor.ID]
+facets_bueno_all=facets_bueno_all %>%filter(sample %in%  bueno_info$DNA.Tumor.ID)
+rownames(bueno_info)=bueno_info$Tumor.ID
+#we rename the rnaseq matrix
+colnames(bueno_rnaseq_tpm)=bueno_info[colnames(bueno_rnaseq_tpm),]$DNA.Tumor.ID
+#overlap CNVs(exome) and RNAseq for Bueno excluding NA purity predictions with facets
+bueno_overlap=intersect(intersect(colnames(bueno_rnaseq_tpm),bueno_pur$ids),unique(facets_bueno_all$sample))
+#we keep only protein coding genes
+b=intersect(gencode$ensid,rownames(bueno_rnaseq_tpm))
+bueno_rnaseq_tpm=bueno_rnaseq_tpm[b,]
+
+
+
+```
+
+## Bueno CNV overlap
+
+```{r buenocnv}
+
+# we create the CNV matrix at gene level
+bueno_cnv_by_gene=data.frame(g=gencode$ensid)
+#to keep the same order of colums as in rna_seq_expression
+samples_select=colnames(bueno_rnaseq_tpm)
+
+for(i in samples_select){
+#cnv data per genome
+test=facets_bueno_all %>% filter(sample == i)
+#overlaps
+cnvs=makeGRangesFromDataFrame(test,keep.extra.columns=T,
+                               seqnames.field = "chrom",
+                               start.field = "start",
+                               end.field = "end")
+ovl1=findOverlaps(genes_db,cnvs,type=c("any"),select=("first"))
+#we convert facets to cnvs
+b=log2(test[ovl1,]$tcn.em+0.01)-1
+bueno_cnv_by_gene=cbind(bueno_cnv_by_gene,b)
+}
+colnames(bueno_cnv_by_gene)=c("ensid",samples_select)
+#we get the lenght of the different matrix
+rownames(bueno_cnv_by_gene)=bueno_cnv_by_gene$ensid
+bueno_cnv_by_gene=bueno_cnv_by_gene[,-1]
+bueno_cnv_by_gene[is.na(bueno_cnv_by_gene)] <- 0.01
+
+#we print some numbers
+dim(bueno_cnv_by_gene)
+dim(bueno_rnaseq_tpm)
+dim(bueno_pur)
+#we set the WGD status
+bueno_wgd=read.table("bueno_facets_resume_wgd.txt")
+colnames(bueno_wgd)=c("cnv_file","number_autosomes","ploidy")
+bueno_wgd=bueno_wgd %>% filter(number_autosomes >=10)
+write.table(file="bueno_wgd_filtered_samples.txt",bueno_wgd,quote=F,row.names = F)
+l=str_split(bueno_wgd$cnv_file, "_")
+bueno_ids_wgd=sapply(l, "[[", 6)
+bueno_pur$WGD_Status = factor(ifelse(bueno_pur$ids %in% bueno_ids_wgd, "Yes", "No"), levels = c("No", "Yes"))
+#meso_purity_ploidy_wgd$WGD_Status = factor(ifelse(meso_purity_ploidy_wgd$wholeGenomeDuplication=="true", "Yes", "No"), levels = c("No", "Yes"))
+
+```
+
+## Bueno differential expression analysis
+
+```{r buenoexpdiff}
+#library(assertr)
+bueno_cnv_by_gene=as.matrix(bueno_cnv_by_gene)
+bueno_rnaseq_tpm=as.matrix(bueno_rnaseq_tpm)
+covars = bueno_pur[,c("WGD_Status", "purity")]
+rownames(covars)=rownames(bueno_pur)
+#we order to the 
+covars = covars[colnames(bueno_rnaseq_tpm),]
+#data = cbind(Expression=bueno_rnaseq_tpm[1,], CNV=bueno_cnv_by_gene[1,], covars)
+table(colnames(bueno_rnaseq_tpm)==colnames(bueno_cnv_by_gene))
+table(colnames(bueno_rnaseq_tpm)==rownames(covars))
+
+#we run the diff analysis
+var.names = c("Expression", "CNV", colnames(covars))
+  form = as.formula(paste0("Expression ~ CNV + ", paste(colnames(covars), collapse = "+")))
+  coef = c()
+  sterr = c()
+  pval = c()
+  tstat = c()
+  
+#data = cbind(Expression=bueno_rnaseq_tpm["ENSG00000159455.9",], CNV=bueno_cnv_by_gene["ENSG00000159455.9",], covars)
+#faild_model=result_bueno %>% filter(is.na(Expression_Tstat)) %>% select(Gene)
+for(i in 1:nrow(bueno_rnaseq_tpm)) {
+ #for(i in 1:nrow(faild_model)) {
+    data = cbind(Expression=bueno_rnaseq_tpm[i,], CNV=bueno_cnv_by_gene[i,], covars)
+    #if(dim(data)[1] == 93 & dim(data)[2]==4){
+    error = try({
+    model = lm(formula = form, data = data)
+    }, silent = FALSE)
+    
+    if(class(error) == "try-error") {
+     coef = cbind(coef, NA)
+      sterr = cbind(sterr, NA)
+      tstat = cbind(tstat, NA)
+      pval = cbind(pval, NA)
+      
+    } else {
+      s = summary(model)$coefficients  
+      if(dim(s)[1]==dim(s)[2] & dim(s)[2]==4){
+      coef = cbind(coef, s[,1])
+      sterr = cbind(sterr, s[,2])
+        tstat = cbind(tstat, s[,3])
+      pval = cbind(pval, s[,4])
+      }else{
+        coef = cbind(coef, NA)
+      sterr = cbind(sterr, NA)
+      tstat = cbind(tstat, NA)
+      pval = cbind(pval, NA)  
+      #expression is equal 0 or CNV is not variable
+      cat("gene with error :", i, "\n")
+      
+     }
+    }
+    #}
+    if(i %% 1000 == 0) {
+      cat("Analysis of", i, "genes completed\n")
+    }
+  }
+  
+   fdr = apply(pval, 1, p.adjust, method="fdr")
+  rownames(coef) = paste0(var.names, "_Estimate")
+  rownames(sterr) = paste0(var.names, "_StdError")
+  rownames(tstat) = paste0(var.names, "_Tstat")
+  rownames(pval) = paste0(var.names, "_Pvalue")
+  colnames(fdr) = paste0(var.names, "_FDR")
+  
+  result_bueno = data.frame(Gene = rownames(bueno_rnaseq_tpm),
+                      t(coef),t(sterr),t(tstat),t(pval),fdr)
+   fn = paste0("BUENO_LM_Exp_tilde_CNV_WGD_Purity_", i, ".txt.gz")
+   write.table(result_bueno, gzfile(fn), row.names=FALSE, sep="\t", quote = FALSE)
+
+```
+
+# Perform functional enrichment of Bueno WGD  {.tabset .tabset-fade}
+Functional enrichment using the hypeR package will identify classes of genes enriched in genes associated with WGD status in mesothelioma. We will use Hallmark gene sets (H) from MSigDB. We will examine genes with FDR < 0.05 with respect to WGD status in mesothelioma. Functional enrichment is performed separately for up and down-regulated genes.
+
+```{r enrichbueno,  results="asis"}
+
+up = subset(result_bueno, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+
+up_genename=gencode[gencode$ensid %in% up$Gene,c("hugo")]
+up.enrich = hypeR(up_genename, gs)
+hyp_to_table(up.enrich, file_path = "Bueno_WGD_up_regulated_enrichment.txt")
+
+down = subset(result_bueno, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+down_genename=gencode[gencode$ensid %in% down$Gene,c("hugo")]
+down.enrich = hypeR(down_genename, gs)
+hyp_to_table(down.enrich, file_path = "Bueno_WGD_down_regulated_enrichment.txt")
+
+
+#hyp_emap(up.enrich)
+#
+upplot=hyp_dots(up.enrich, fdr=1, val="fdr") + ggtitle("Up-regulated WGD genes (12)")  + theme_classic()
+downplot=hyp_dots(down.enrich,fdr=1, val="fdr") + ggtitle("Down-regulated WGD genes (89)")  + theme_classic()
+pdf("Bueno_WGD_up_down_hallmark_pathways.pdf",width=15)
+upplot | downplot
+dev.off()
+upplot | downplot
+
+ cat(paste0('## ', i, ' {.tabset} \n\n'))
+  cat(paste0('### Up \n\n'))
+  
+  d = subset(up.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+  
+  cat('\n\n')
+  cat(paste0('### Down \n\n'))
+  
+  d = subset(down.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+
+```
+
+# WGD genes with TCGA data
+We load and prepare the TCGA data
+```{r loadtcga}
+#TCGA data
+tcga_pur=read.delim("/data/gcs/mesomics/files/Public_Data/WES/Hmeljak_CanDiscov_2018/out_facets_tcga_min_read_20/facets_summary_stats.txt",h=T,sep="\t")
+path_t="/data/gcs/mesomics/files/Public_Data/WES/Hmeljak_CanDiscov_2018/out_facets_tcga_min_read_20/all_facets_stats"
+#we load the segments files
+tcga_cnv_files=list.files(path=path_t,pattern="*_BQSRecalibrated.csv.gz_CNV.txt",recursive=TRUE)
+p_p=paste0(path_t,"/",tcga_cnv_files)
+tcga_cnv_list = lapply(p_p, read.delim)
+l=str_split(tcga_cnv_files, "_")
+tcga_ids=sapply(l, "[[", 1)
+facets_tcga=Map(cbind, tcga_cnv_list, sample = tcga_ids)
+facets_tcga_all=do.call(rbind,facets_tcga) #merge
+
+#facets for WGD computation
+#chrom tcn.em lcn.em start end sample
+#facets_tcga_all %>%select(chrom tcn.em lcn.em start end sample)
+facets_tcga_all_wgd=facets_tcga_all %>% select(chrom,tcn.em,lcn.em,start,end,sample) %>%filter(tcn.em-lcn.em > 1.5)
+write.table(facets_tcga_all_wgd,row.names=F,quote=F,file="tcga_facets_cvn_exome.txt")
+
+
+#we split the sample name to match acrros data types
+l=str_split(tcga_pur$Sample, "_")
+tcga_ids=sapply(l, "[[", 1)
+tcga_pur=cbind(tcga_pur, ids=tcga_ids)
+write.table(tcga_pur,row.names=F,quote=F,file="tcga_facets_purity_cvn_exome.txt")
+#we match the data 
+tcga_pur=tcga_pur %>% filter(!is.na(purity )) %>%select(purity,ploidy,ids)
+
+#TMP or FKM data
+load("/data/gcs/mesomics/files/Public_Data/RNAseq/Hmeljak_CanDiscov_2018/quantification/release2_18062020/Robjects/gene_1pass.SE.rda")
+
+tcga_rnaseq_tpm=assay(gene_1pass.SE,"abundance_TPM")
+b=gsub("-01A","",colnames(tcga_rnaseq_tpm))
+b=gsub("-01B","",b)
+colnames(tcga_rnaseq_tpm)=b
+#we keep only protein coding genes
+b=intersect(gencode$ensid,rownames(tcga_rnaseq_tpm))
+tcga_rnaseq_tpm=tcga_rnaseq_tpm[b,]
+dim(tcga_rnaseq_tpm)
+
+#we overlap all data types
+overlap_tcga=intersect(intersect(colnames(tcga_rnaseq_tpm),tcga_pur$ids),unique(facets_tcga_all$sample))
+length(overlap_tcga)
+#transciptome
+tcga_rnaseq_tpm=tcga_rnaseq_tpm[,overlap_tcga]
+#CNVs
+facets_tcga_all=facets_tcga_all %>%filter(sample %in% overlap_tcga)
+#purity and ploidy
+tcga_pur=tcga_pur%>%filter(ids %in% overlap_tcga)
+dim(tcga_rnaseq_tpm)
+length(unique(facets_tcga_all$sample))
+dim(tcga_pur)
+```
+
+### compute WGD samples
+
+we computet the samples with WGD
+```{bash }
+perl compute_wgd_tcga.pl -a tcga_facets_cvn_exome.txt -c tcga_facets_purity_cvn_exome.txt -b ../data/reference/hs38DH.chr.len.txt > tcga_cnv_wgd.txt
+```
+We load the WGD samples
+```{r loadwgdtcga}
+wgd_tcga=read.table("tcga_cnv_wgd.txt")
+colnames(wgd_tcga)=c("sample","nchr","ploidy")
+wgd_tcga=wgd_tcga %>% filter(nchr >=10)
+write.table(file="TCGA_wgd_filtered_samples.txt",wgd_tcga,quote=F,row.names = F)
+tcga_pur$WGD_Status = factor(ifelse(tcga_pur$ids %in% wgd_tcga$sample, "Yes", "No"), levels = c("No", "Yes"))
+rownames(tcga_pur)=tcga_pur$ids
+```
+
+## TCGA CNV overlap
+
+```{r tcgacnv}
+
+# we create the CNV matrix at gene level
+tcga_cnv_by_gene=data.frame(g=gencode$ensid)
+#to keep the same order of colums as in rna_seq_expression
+samples_select=colnames(tcga_rnaseq_tpm)
+
+for(i in samples_select){
+#cnv data per genome
+test=facets_tcga_all %>% filter(sample == i)
+#overlaps
+cnvs=makeGRangesFromDataFrame(test,keep.extra.columns=T,
+                               seqnames.field = "chrom",
+                               start.field = "start",
+                               end.field = "end")
+ovl1=findOverlaps(genes_db,cnvs,type=c("any"),select=("first"))
+#we convert facets to cnvs
+b=log2(test[ovl1,]$tcn.em+0.01)-1
+tcga_cnv_by_gene=cbind(tcga_cnv_by_gene,b)
+}
+colnames(tcga_cnv_by_gene)=c("ensid",samples_select)
+#we get the lenght of the different matrix
+rownames(tcga_cnv_by_gene)=tcga_cnv_by_gene$ensid
+tcga_cnv_by_gene=tcga_cnv_by_gene[,-1]
+tcga_cnv_by_gene[is.na(tcga_cnv_by_gene)] <- 0.01
+
+#we print some numbers
+dim(tcga_cnv_by_gene)
+dim(tcga_rnaseq_tpm)
+dim(tcga_pur)
+#we set the WGD status
+
+#bueno_wgd=read.table("bueno_facets_resume_wgd.txt")
+#colnames(bueno_wgd)=c("cnv_file","number_autosomes","ploidy")
+#bueno_wgd=bueno_wgd %>% filter(number_autosomes >=10)
+#l=str_split(bueno_wgd$cnv_file, "_")
+#bueno_ids_wgd=sapply(l, "[[", 6)
+#bueno_pur$WGD_Status = factor(ifelse(bueno_pur$ids %in% bueno_ids_wgd, "Yes", "No"), levels = c("No", "Yes"))
+#meso_purity_ploidy_wgd$WGD_Status = factor(ifelse(meso_purity_ploidy_wgd$wholeGenomeDuplication=="true", "Yes", "No"), levels = c("No", "Yes"))
+
+```
+
+
+## TCGA differential expression analysis
+
+```{r tcgaexpdiff}
+#library(assertr)
+tcga_cnv_by_gene=as.matrix(tcga_cnv_by_gene)
+tcga_rnaseq_tpm=as.matrix(tcga_rnaseq_tpm)
+#we match colum order
+match_col_order=match(colnames(tcga_rnaseq_tpm),colnames(tcga_cnv_by_gene))
+#we reorder the tcga_cnv_by_gene
+tcga_cnv_by_gene=tcga_cnv_by_gene[,match_col_order]
+
+covars = tcga_pur[,c("WGD_Status", "purity")]
+rownames(covars)=rownames(tcga_pur)
+#we order to the covars with respecto to the samples
+covars = covars[colnames(tcga_rnaseq_tpm),]
+#data = cbind(Expression=bueno_rnaseq_tpm[1,], CNV=bueno_cnv_by_gene[1,], covars)
+table(colnames(tcga_rnaseq_tpm)==colnames(tcga_cnv_by_gene))
+table(colnames(tcga_rnaseq_tpm)==rownames(covars))
+#we check that genes have the same order
+table(rownames(tcga_rnaseq_tpm)==rownames(tcga_cnv_by_gene))
+
+#we run the diff analysis
+var.names = c("Expression", "CNV", colnames(covars))
+  form = as.formula(paste0("Expression ~ CNV + ", paste(colnames(covars), collapse = "+")))
+  coef = c()
+  sterr = c()
+  pval = c()
+  tstat = c()
+  
+#data = cbind(Expression=bueno_rnaseq_tpm["ENSG00000159455.9",], CNV=bueno_cnv_by_gene["ENSG00000159455.9",], covars)
+#faild_model=result_bueno %>% filter(is.na(Expression_Tstat)) %>% select(Gene)
+for(i in 1:nrow(tcga_rnaseq_tpm)) {
+ #for(i in 1:nrow(faild_model)) {
+    data = cbind(Expression=tcga_rnaseq_tpm[i,], CNV=tcga_cnv_by_gene[i,], covars)
+    #if(dim(data)[1] == 93 & dim(data)[2]==4){
+    error = try({
+    model = lm(formula = form, data = data)
+    }, silent = FALSE)
+    
+    if(class(error) == "try-error") {
+     coef = cbind(coef, NA)
+      sterr = cbind(sterr, NA)
+      tstat = cbind(tstat, NA)
+      pval = cbind(pval, NA)
+      
+    } else {
+      s = summary(model)$coefficients  
+      if(dim(s)[1]==dim(s)[2] & dim(s)[2]==4){
+      coef = cbind(coef, s[,1])
+      sterr = cbind(sterr, s[,2])
+        tstat = cbind(tstat, s[,3])
+      pval = cbind(pval, s[,4])
+      }else{
+        coef = cbind(coef, NA)
+      sterr = cbind(sterr, NA)
+      tstat = cbind(tstat, NA)
+      pval = cbind(pval, NA)  
+      #expression is equal 0 or CNV is not variable
+      cat("gene with error :", i, "\n")
+      
+     }
+    }
+    #}
+    if(i %% 1000 == 0) {
+      cat("Analysis of", i, "genes completed\n")
+    }
+  }
+  
+   fdr = apply(pval, 1, p.adjust, method="fdr")
+  rownames(coef) = paste0(var.names, "_Estimate")
+  rownames(sterr) = paste0(var.names, "_StdError")
+  rownames(tstat) = paste0(var.names, "_Tstat")
+  rownames(pval) = paste0(var.names, "_Pvalue")
+  colnames(fdr) = paste0(var.names, "_FDR")
+  
+  result_tcga = data.frame(Gene = rownames(tcga_rnaseq_tpm),
+                      t(coef),t(sterr),t(tstat),t(pval),fdr)
+   fn = paste0("TCGA_LM_Exp_tilde_CNV_WGD_Purity_", i, ".txt.gz")
+   write.table(result_tcga, gzfile(fn), row.names=FALSE, sep="\t", quote = FALSE)
+
+```
+
+# Perform functional enrichment of TCGA WGD  {.tabset .tabset-fade}
+Functional enrichment using the hypeR package will identify classes of genes enriched in genes associated with WGD status in mesothelioma. We will use Hallmark gene sets (H) from MSigDB. We will examine genes with FDR < 0.05 with respect to WGD status in mesothelioma. Functional enrichment is performed separately for up and down-regulated genes.
+
+```{r enrichtcga,  results="asis"}
+
+up = subset(result_tcga, WGD_Status_FDR < 0.05 & WGD_Status_Estimate > 0)
+
+up_genename=gencode[gencode$ensid %in% up$Gene,c("hugo")]
+up.enrich = hypeR(up_genename, gs)
+hyp_to_table(up.enrich, file_path = "tcga_WGD_up_regulated_enrichment.txt")
+
+down = subset(result_tcga, WGD_Status_FDR < 0.05 & WGD_Status_Estimate < 0)
+down_genename=gencode[gencode$ensid %in% down$Gene,c("hugo")]
+down.enrich = hypeR(down_genename, gs)
+hyp_to_table(down.enrich, file_path = "tcga_WGD_down_regulated_enrichment.txt")
+
+
+#hyp_emap(up.enrich)
+#
+upplot=hyp_dots(up.enrich, fdr=1, val="fdr") + ggtitle("Up-regulated WGD genes (10)")  + theme_classic()
+downplot=hyp_dots(down.enrich,fdr=1, val="fdr") + ggtitle("Down-regulated WGD genes (52)")  + theme_classic()
+pdf("TCGA_WGD_up_down_hallmark_pathways.pdf",width=15)
+upplot | downplot
+dev.off()
+upplot | downplot
+
+ cat(paste0('## ', i, ' {.tabset} \n\n'))
+  cat(paste0('### Up \n\n'))
+  
+  d = subset(up.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+  
+  cat('\n\n')
+  cat(paste0('### Down \n\n'))
+  
+  d = subset(down.enrich$data, fdr < 1)
+  print(kableExtra::kable(d, style = 'html', row.names = FALSE) %>% kable_styling(bootstrap_options = "striped") %>% scroll_box(width = "100%"))
+
+```
+
+
+
+
+
+# Enrichment for Chromotripsis regions
+```{r loadchrom}
+chrom=read.table("Samples_with_chromotripsis.txt",h=T)
+#we prepare the selected calls 
+chrom_hc=chrom %>% filter(hc_criteria == "high-confidence") %>%select(chrom,start,end, sample) %>%  filter(sample %in% Data_Sharing$Cohort) %>% mutate(chrom=gsub("chr","",chrom))
+#we prepare the generange object to intersect the calls.
+shatt_reg=makeGRangesFromDataFrame(chrom_hc,keep.extra.columns=T,
+                               seqnames.field = "chrom",
+                               start.field = "start",
+                               end.field = "end")
+ovl1=findOverlaps(shatt_reg,genes_db,type=c("any"),select=("all"), minoverlap=2000)
+chrom_gene=gencode[unique(subjectHits(ovl1)),]
+chrom.enrich = hypeR(chrom_gene$hugo, gs)
+chromplot=hyp_dots(chrom.enrich, fdr=1, val="fdr") + ggtitle("Chromothripsis enriched pathways")  + theme_classic()
+chromplot
+
+#hyp_emap(chrom.enrich)
+```
+
+
