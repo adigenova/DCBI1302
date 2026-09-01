@@ -68,7 +68,7 @@ summary(pca_result)
 fviz_eig(pca_result)
 
 # Extract the first two principal components
-pca_data <- data.frame(pca_result$x[, 1:2])
+pca_data <- data.frame(pca_result$x[, 1:3])
 
 # Apply K-means clustering on the principal components
 set.seed(123) # For reproducibility

@@ -36,7 +36,8 @@ p1=ggplot(data = chile_map) +
   geom_point(data = locations, aes(x = lon, y = lat, color = city, shape=city), size = 3) +
   scale_color_manual(values = c("Santiago" = "blue", "Rancagua" = "red")) +
   ggtitle("Chile") +
-  theme_light() +
+  theme_classic() +
+  #theme_light() +
   theme(text = element_text(size = 12), legend.position = "none",  axis.text.x=element_blank()) +
   labs(color = "Ciudad")
 p1
@@ -44,22 +45,29 @@ p1
 We get demographic data
 ```{r democovid}
 library(tidyverse)
+#paquete para dibujar distribuciones de puntos -> reemplazo de geom_jitter
 library(ggbeeswarm)
+
 df=read.table("data/all_samples.txt", h=T)
 df=df %>% separate(Date, into=c("m","d","y")) %>% mutate(Ct=as.integer(Ct))
 
-p2=df %>% ggplot(aes(x=y,y=Age,color=Region,shape=Sex)) + geom_quasirandom() +
+p2=df %>% ggplot(aes(x=y,y=Age,color=Region,shape=Sex)) + geom_quasirandom() + 
 scale_color_manual(values = c("Metropolitana" = "blue", "O'Higgins" = "red")) + labs(x="Years",y="Age",title="Samples")+
   theme_light()
 p2
 
-p3=df %>% ggplot(aes(x=Age,y=Ct,color=Sex,group=Region)) + 
+p3=df %>% ggplot(aes(x=Age,y=Ct,color=Sex, group=Region)) + 
   geom_point() +
   geom_smooth(method="lm")+
   geom_hline(yintercept = 28,linetype = 2) +
   facet_wrap(.~Region)+
   labs(title="Ct vs Age",x="Edad",y="Ct") +
   theme_light()
+p3
+
+#df %>% ggplot(aes(x=Region,y=Ct,color=Sex, group=Region)) + geom_quasirandom() +theme_classic()
+
+
 
 ```
 

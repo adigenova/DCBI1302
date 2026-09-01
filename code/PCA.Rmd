@@ -9,6 +9,7 @@ date: "`r Sys.Date()`"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+
 ## PCA
 
 ### R libraries for PCA
@@ -87,6 +88,19 @@ head(decathlon2)
 
 decathlon2.active <- decathlon2[1:23, 1:10]
 head(decathlon2.active)
+
+lj=lm(Long.jump~.,data=decathlon2.active)
+summary(lj)
+plot(decathlon2.active$Long.jump,decathlon2.active$X100m)
+
+Jv=lm(Javeline~.,data=decathlon2.active)
+summary(Jv)
+plot(decathlon2.active$Javeline,decathlon2.active$X110m.hurdle)
+
+lj=lm(X100m~.,data=decathlon2.active)
+summary(lj)
+plot(decathlon2.active$X100m,decathlon2.active$X110m.hurdle)
+ 
 ```
 
 ## Computing PCA
@@ -184,7 +198,7 @@ Looking at particular components
 
 ```{r cospc}
 # Total cos2 of variables on Dim.1 
-fviz_cos2(res.pca, choice = "var", axes = 1)
+fviz_cos2(res.pca, choice = "var", axes = 5)
 ```
 
 1. A high cos2 indicates a good representation of the variable on the principal component. In this case the variable is positioned close to the circumference of the correlation circle.
@@ -233,9 +247,10 @@ fviz_pca_var(res.pca, col.var = "contrib",gradient.cols = c("#00AFBB", "#E7B800"
 ### Dimension description
 
 ```{r rdd}
-res.desc <- dimdesc(res.pca, axes = c(1,2), proba = 0.05)
+res.desc <- dimdesc(res.pca, axes = c(1,2,3), proba = 0.05)
 res.desc$Dim.1
 res.desc$Dim.2
+res.desc$Dim.3
 ```
 
 ### individuals

@@ -1,7 +1,7 @@
 PCA
 ================
 Alex Di Genova
-2024-07-04
+2025-11-24
 
 ## PCA
 
@@ -329,7 +329,7 @@ correlation
 library("corrplot") 
 ```
 
-    ## corrplot 0.92 loaded
+    ## corrplot 0.95 loaded
 
 ``` r
 corrplot(var$cos2, is.corr=FALSE)

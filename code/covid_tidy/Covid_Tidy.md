@@ -1,7 +1,7 @@
 Tidyverse_COVID_Example
 ================
 Alex Di Genova
-2024-06-11
+2025-11-03
 
 ## COVID 19 data analysis
 
@@ -48,8 +48,8 @@ library(tidyverse)
     ## ── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
     ## ✔ dplyr     1.1.4     ✔ readr     2.1.5
     ## ✔ forcats   1.0.0     ✔ stringr   1.5.1
-    ## ✔ lubridate 1.9.3     ✔ tibble    3.2.1
-    ## ✔ purrr     1.0.2     ✔ tidyr     1.3.1
+    ## ✔ lubridate 1.9.4     ✔ tibble    3.2.1
+    ## ✔ purrr     1.0.4     ✔ tidyr     1.3.1
     ## ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
     ## ✖ dplyr::filter() masks stats::filter()
     ## ✖ dplyr::lag()    masks stats::lag()
@@ -87,12 +87,14 @@ library(patchwork)
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-    ## Warning: The following aesthetics were dropped during statistical transformation: colour
+    ## Warning: The following aesthetics were dropped during statistical transformation:
+    ## colour.
     ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
     ##   the data.
     ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
     ##   variable into a factor?
-    ## The following aesthetics were dropped during statistical transformation: colour
+    ## The following aesthetics were dropped during statistical transformation:
+    ## colour.
     ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
     ##   the data.
     ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
@@ -107,12 +109,14 @@ pdf("Fig1.pdf",5,3)
 
     ## `geom_smooth()` using formula = 'y ~ x'
 
-    ## Warning: The following aesthetics were dropped during statistical transformation: colour
+    ## Warning: The following aesthetics were dropped during statistical transformation:
+    ## colour.
     ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
     ##   the data.
     ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
     ##   variable into a factor?
-    ## The following aesthetics were dropped during statistical transformation: colour
+    ## The following aesthetics were dropped during statistical transformation:
+    ## colour.
     ## ℹ This can happen when ggplot fails to infer the correct grouping structure in
     ##   the data.
     ## ℹ Did you forget to specify a `group` aesthetic or to convert a numerical
