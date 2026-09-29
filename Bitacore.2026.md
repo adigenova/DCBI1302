@@ -45,9 +45,9 @@ Practice with the files under the ***data*** directory
 - [sed](https://learnbyexample.github.io/learn_gnused/cover.html)
 - [regex](https://regexr.com/)
 
-## 08/09/2026
+## 07/09/2026
 
-Fundamentos de Programación: Python
+Fundamentos de Programación: Python I
 
 ### slides
 
@@ -57,5 +57,66 @@ Fundamentos de Programación: Python
 ### additional work
 
 [Todos podemos programar](https://github.com/adigenova/tpp)
+
+
+
+## 09/09/2026
+
+Fundamentos de Programación: Python II
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/AP_W3C2.pdf)
+
+
+### additional work
+
+[Todos podemos programar](https://github.com/adigenova/tpp)
+
+## 14/09/2026
+
+Introduccion a ciencia de datos
+
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/MD_W2C01.pdf)
+
+
+## 21/09/2026
+
+algoritmos principales de ciencia de datos
+### slides
+
+[class](https://github.com/adigenova/DCBI1302/blob/main/class/MD_W2C02.pdf)
+
+## 23/09/2026
+
+data wrangling y visualizaion de datos I y II
+
+### slides
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD_W2C03.pdf)
+
+[slides 2](https://github.com/adigenova/DCBI1302/blob/main/class/MD_W3C01.pdf)
+
+## 28/09/2026
+
+Metodos estadisticos I y II
+
+### slides
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W04-C01.pdf)
+
+[slides 2](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W04-C02.pdf)
+
+### Code
+
+[Colab Notebook](https://github.com/adigenova/uohdm/blob/main/code/taller_testing_estadistico.ipynb)
+
+## 30/09/2026
+
+Modelos lineales
+
+## 
 
 
