@@ -120,3 +120,19 @@ Modelos lineales I
 Contenido hasta modelos lineales 1.
 
 
+## Semana receso
+
+## Semana Emergencia climatica y paro estudiantil
+
+
+## 27/10/2026
+
+Modelos lineales 1, regresion logistica
+
+### slides 
+
+Slides modelos linenales y regresion logistica:
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W05-C01.pdf)
+[slides 2](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W06-C02.pdf)
+
