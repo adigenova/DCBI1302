@@ -58,8 +58,6 @@ Fundamentos de Programación: Python I
 
 [Todos podemos programar](https://github.com/adigenova/tpp)
 
-
-
 ## 09/09/2026
 
 Fundamentos de Programación: Python II
@@ -115,8 +113,10 @@ Metodos estadisticos I y II
 
 ## 30/09/2026
 
-Modelos lineales
+Modelos lineales I
 
-## 
+## Control 1 06/10/2026
+
+Contenido hasta modelos lineales 1.
 
 
