@@ -136,3 +136,13 @@ Slides modelos linenales y regresion logistica:
 [slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W05-C01.pdf)
 [slides 2](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W06-C02.pdf)
 
+
+## 29/10/2026
+
+Seleccion Automatica de variables
+
+### slides
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W07-C01.pdf)
+
+
