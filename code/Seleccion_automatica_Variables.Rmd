@@ -1,0 +1,562 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r}
+# Instalar si es necesario
+#install.packages(c("tidyverse", "broom", "performance", "MASS", "leaps", "glmnet", "caret", "pROC"))
+
+library(tidyverse)
+library(broom)
+library(performance)
+library(MASS)       # stepAIC
+library(leaps)      # selección exhaustiva/subsets
+library(glmnet)     # LASSO / ridge / elastic net
+library(caret)      # entrenamiento y validación cruzada
+library(pROC)       # ROC-AUC para regresión logística
+
+```
+## Ejemplo 1:
+
+```{r mtcars}
+data(mtcars)
+mtcars <- mtcars %>%
+  mutate(am = factor(am, labels = c("auto", "manual")),
+         cyl = factor(cyl))
+
+m0 <- lm(mpg ~ 1, data = mtcars)
+m1 <- lm(mpg ~ wt, data = mtcars)
+m2 <- lm(mpg ~ wt + hp + cyl, data = mtcars)
+m3 <- lm(mpg ~ wt + hp + cyl + am + qsec, data = mtcars)
+
+modelos <- list(nulo = m0, simple = m1, multiple = m2, completo = m3)
+
+map_df(modelos, glance, .id = "modelo") %>%
+  dplyr::select(modelo, r.squared, adj.r.squared, AIC, BIC, sigma, p.value) %>%
+  arrange(AIC)
+
+```
+## Comparacion modelos con ANOVA
+
+```{r anova}
+# m2 está contenido dentro de m3: m3 agrega am y qsec
+anova(m2, m3)
+
+# Interpretación:
+# H0: las variables agregadas no reducen significativamente el RSS.
+# H1: al menos una de las variables agregadas mejora el modelo.
+
+# Diagnóstico rápido del modelo seleccionado
+#check_model(m2)
+
+```
+
+## stepwise usando AIC
+
+```{r stepwiseac}
+modelo_full <- lm(mpg ~ .,
+                  data = mtcars)
+modelo_null <- lm(mpg ~ 1, data = mtcars)
+
+step_aic <- stepAIC(modelo_null,
+                    scope = list(lower = modelo_null, upper = modelo_full),
+                    direction = "both",
+                    trace = FALSE)
+
+summary(step_aic)
+glance(step_aic)
+tidy(step_aic, conf.int = TRUE)
+
+```
+# Regresion penalizada
+
+```{r rexap}
+library(glmnet)
+
+full_model=lm(mpg ~ ., data=mtcars)
+coef(full_model)
+
+# Matriz de predictores
+X <- model.matrix(mpg ~ ., data = mtcars)[, -1]
+
+# Variable respuesta
+y <- mtcars$mpg
+
+#ridge 
+modelo_ridge <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 0
+)
+coef(modelo_ridge, s = "lambda.min")
+
+# lambda.min es el valor de λ que produce el menor error promedio de validación cruzada.
+#Es decir, el modelo con mejor rendimiento predictivo dentro de los valores evaluados.
+
+modelo_lasso <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 1
+)
+
+coef(modelo_lasso, s = "lambda.min")
+coef(modelo_lasso, s = "lambda.1se")
+#lambda.1se es el valor de λ más grande cuyo error está dentro de una desviación estándar del error mínimo.
+# elegir el modelo más simple que tiene un rendimiento estadísticamente parecido al mejor modelo.
+# entrega un modelo más conservador, con más penalización y usualmente menos variables.
+
+
+modelo_elastic <- cv.glmnet(
+  x = X,
+  y = y,
+  alpha = 0.5
+)
+
+coef(modelo_elastic, s = "lambda.min")
+
+```
+# comparamos los coeficientes
+
+```{r coef_cmp}
+extraer_coeficientes <- function(modelo, metodo, lambda_tipo) {
+  
+  coef(modelo, s = lambda_tipo) %>%
+    as.matrix() %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "variable") %>%
+    rename(coeficiente = 2) %>%
+    mutate(
+      metodo = metodo,
+      lambda = lambda_tipo
+    )
+}
+
+coeficientes_penalizados <- bind_rows(
+  
+  extraer_coeficientes(
+    modelo = modelo_ridge,
+    metodo = "Ridge",
+    lambda_tipo = "lambda.min"
+  ),
+  
+  extraer_coeficientes(
+    modelo = modelo_ridge,
+    metodo = "Ridge",
+    lambda_tipo = "lambda.1se"
+  ),
+  
+  extraer_coeficientes(
+    modelo = modelo_lasso,
+    metodo = "LASSO",
+    lambda_tipo = "lambda.min"
+  ),
+  
+  extraer_coeficientes(
+    modelo = modelo_lasso,
+    metodo = "LASSO",
+    lambda_tipo = "lambda.1se"
+  ),
+  
+  extraer_coeficientes(
+    modelo = modelo_elastic,
+    metodo = "Elastic Net",
+    lambda_tipo = "lambda.min"
+  ),
+  
+  extraer_coeficientes(
+    modelo = modelo_elastic,
+    metodo = "Elastic Net",
+    lambda_tipo = "lambda.1se"
+  ),
+  
+   extraer_coeficientes(
+    modelo = full_model,
+    metodo = "LM",
+    lambda_tipo = "lambda.min"
+  ),
+  
+  extraer_coeficientes(
+    modelo = full_model,
+    metodo = "LM",
+    lambda_tipo = "lambda.1se"
+  )
+  
+)
+#coeficientes_penalizados
+
+coeficientes_comparacion <- coeficientes_penalizados %>%
+  unite("modelo_lambda", metodo, lambda, sep = "_") %>%
+  pivot_wider(
+    names_from = modelo_lambda,
+    values_from = coeficiente
+  )
+
+coeficientes_comparacion
+
+```
+construimos un heatmap para comparar la seleccion y pesos asignados por los metods de regresion penalizada
+
+```{r plotg}
+coef_long_seleccion <- coeficientes_comparacion %>%
+  filter(variable != "(Intercept)") %>%
+  pivot_longer(
+    cols = -variable,
+    names_to = "modelo",
+    values_to = "coeficiente"
+  ) %>%
+  mutate(
+    seleccionada = ifelse(coeficiente == 0, "No seleccionada", "Seleccionada")
+  )
+
+ggplot(coef_long_seleccion, aes(x = modelo, y = variable, fill = seleccionada)) +
+  geom_tile(color = "white") +
+  geom_text(
+    aes(label = round(coeficiente, 2)),
+    size = 3
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Variables seleccionadas por cada modelo",
+    subtitle = "LASSO y Elastic Net pueden dejar coeficientes exactamente en cero",
+    x = "Modelo",
+    y = "Variable",
+    fill = "Estado"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+```
+
+```{r, postreg}
+# 1. Extraer variables seleccionadas
+coef_lasso <- coef(modelo_lasso, s = "lambda.1se")
+
+variables_lasso <- rownames(coef_lasso)[as.numeric(coef_lasso) != 0]
+variables_lasso <- variables_lasso[variables_lasso != "(Intercept)"]
+
+# 3. Ajustar modelo lineal post-LASSO
+formula_lasso <- as.formula(
+  paste("mpg ~", paste(variables_lasso, collapse = " + "))
+)
+
+modelo_post_lasso <- lm(formula_lasso, data = mtcars)
+
+summary(modelo_post_lasso)
+
+```
+## Train/TEST
+
+```{r testt}
+set.seed(123)
+df=mtcars
+idx <- createDataPartition(df$mpg, p = 0.7, list = FALSE)
+train <- df[idx, ]
+test  <- df[-idx, ]
+#modelos
+simple = lm(mpg ~ wt, data = train)
+multiple = lm(mpg ~ wt + hp + am, data = train)
+full = lm(mpg ~ wt + hp + am + qsec + cyl + disp + drat, data = train)
+
+  pred <- predict(simple, newdata = test)
+  a=tibble(modelo = "simple", RMSE = RMSE(pred, test$mpg), AIC = AIC(simple))
+  pred <- predict(multiple, newdata = test)
+  b=tibble(modelo = "multiple", RMSE = RMSE(pred, test$mpg), AIC = AIC(simple))
+  pred <- predict(full, newdata = test)
+  c=tibble(modelo = "full", RMSE = RMSE(pred, test$mpg), AIC = AIC(simple))
+  
+  bind_rows(a,b,c)
+
+```
+
+# Ejemplo Completo
+
+```{r casas}
+#install.packages("AmesHousing")
+library(AmesHousing)
+
+casas <- make_ames()
+
+glimpse(casas)
+```
+
+nos interesa precedir el precio de las casas ```Sale_Price```
+
+```{r exp}
+summary(casas$Sale_Price)
+dim(casas)
+names(casas)
+
+casas %>%
+  summarise(
+    n = n(),
+    variables = ncol(casas)
+  )
+```
+chequear datos NA
+
+```{r na}
+casas %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "n_na"
+  ) %>%
+  arrange(desc(n_na))
+```
+some plots
+
+```{r p1}
+ggplot(casas, aes(x = Sale_Price)) +
+  geom_histogram(bins = 40, color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribución del precio de venta",
+    x = "Precio de venta",
+    y = "Frecuencia"
+  )
+
+casas <- casas %>%
+  mutate(log_price = log(Sale_Price))
+
+ggplot(casas, aes(x = log_price)) +
+  geom_histogram(bins = 40, color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribución del logaritmo del precio",
+    x = "log(Sale_Price)",
+    y = "Frecuencia"
+  )
+```
+
+algunas relaciones del precio con variables numericas
+
+```{r p2}
+ggplot(casas, aes(x = Gr_Liv_Area, y = Sale_Price)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal() +
+  labs(
+    title = "Precio vs superficie habitable",
+    x = "Superficie habitable",
+    y = "Precio de venta"
+  )
+
+ggplot(casas, aes(x = Overall_Qual, y = Sale_Price)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Precio según calidad general",
+    x = "Calidad general",
+    y = "Precio de venta"
+  )
+```
+
+Separar train/test
+```{r traint}
+set.seed(123)
+
+idx_train <- createDataPartition(
+  casas$Sale_Price,
+  p = 0.7,
+  list = FALSE
+)
+
+train_data <- casas[idx_train, ]
+test_data  <- casas[-idx_train, ]
+```
+
+Modelos iniciales
+
+```{r modelos}
+modelo_simple <- lm(
+  Sale_Price ~ Gr_Liv_Area,
+  data = train_data
+)
+
+summary(modelo_simple)
+
+modelo_multiple <- lm(
+  Sale_Price ~ Gr_Liv_Area + Overall_Qual + Year_Built + Garage_Area,
+  data = train_data
+)
+
+summary(modelo_multiple)
+
+modelo_full <- lm(
+  Sale_Price ~ Gr_Liv_Area + Overall_Qual + Year_Built +
+    Garage_Area + Total_Bsmt_SF + First_Flr_SF +
+    Full_Bath + TotRms_AbvGrd,
+  data = train_data
+)
+
+summary(modelo_full)
+```
+
+
+Comparar los modelos iniciales
+
+```{r cmp1}
+calcular_rmse <- function(modelo, data_test, respuesta) {
+  pred <- predict(modelo, newdata = data_test)
+  real <- data_test[[respuesta]]
+  sqrt(mean((real - pred)^2, na.rm = TRUE))
+}
+
+comparacion_lm <- tibble(
+  modelo = c("simple", "multiple", "full"),
+  RMSE = c(
+    calcular_rmse(modelo_simple, test_data, "Sale_Price"),
+    calcular_rmse(modelo_multiple, test_data, "Sale_Price"),
+    calcular_rmse(modelo_full, test_data, "Sale_Price")
+  ),
+  AIC = c(
+    AIC(modelo_simple),
+    AIC(modelo_multiple),
+    AIC(modelo_full)
+  ),
+  BIC = c(
+    BIC(modelo_simple),
+    BIC(modelo_multiple),
+    BIC(modelo_full)
+  )
+)
+
+comparacion_lm %>%
+  arrange(RMSE)
+```
+ANOVA
+```{r anov}
+anova(modelo_multiple, modelo_full)
+```
+
+Seleccion Stepwise
+```{r step}
+modelo_step <- stepAIC(
+  modelo_full,
+  direction = "both",
+  trace = FALSE
+)
+
+summary(modelo_step)
+```
+
+Comparacion con previos
+```{r cmp2}
+rmse_step <- calcular_rmse(
+  modelo_step,
+  test_data,
+  "Sale_Price"
+)
+
+tibble(
+  modelo = "stepwise",
+  RMSE = rmse_step,
+  AIC = AIC(modelo_step),
+  BIC = BIC(modelo_step)
+)
+
+comparacion_lm %>%
+  arrange(RMSE)
+```
+
+Buscando el mejor modelo
+```{r bmaic}
+library(MASS)
+
+# Modelo nulo: solo intercepto
+modelo_nulo <- lm(
+  Sale_Price ~ 1,
+  data = train_data
+)
+
+# Modelo completo: todas las variables disponibles
+modelo_completo <- lm(
+  Sale_Price ~ .,
+  data = train_data
+)
+
+# Selección stepwise en ambas direcciones
+modelo_step_all <- stepAIC(
+  modelo_nulo,
+  scope = list(
+    lower = modelo_nulo,
+    upper = modelo_completo
+  ),
+  direction = "both",
+  trace = TRUE
+)
+
+summary(modelo_step_all)
+
+formula(modelo_step_all)
+```
+
+LASSO
+
+```{r plasso}
+X_train <- model.matrix(
+  Sale_Price ~ .,
+  data = train_data
+)[, -1]
+
+y_train <- train_data$Sale_Price
+
+X_test <- model.matrix(
+  Sale_Price ~ .,
+  data = test_data
+)[, -1]
+
+y_test <- test_data$Sale_Price
+```
+ajustamos lasso
+```{r ala}
+set.seed(123)
+
+modelo_lasso <- cv.glmnet(
+  x = X_train,
+  y = y_train,
+  alpha = 1,
+  nfolds = 10,
+  standardize = TRUE
+)
+
+#plot(modelo_lasso)
+
+coef_lasso <- coef(
+  modelo_lasso,
+  s = "lambda.1se"
+)
+
+#coef_lasso
+
+coef_lasso_df <- coef_lasso %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  rename(coeficiente = 2) %>%
+  filter(coeficiente != 0) %>%
+  filter(variable != "(Intercept)") %>%
+  arrange(desc(abs(coeficiente)))
+
+coef_lasso_df
+
+```
+
+mayor penalizacion
+```{r p2l}
+lambda_mas_fuerte <- modelo_lasso$lambda.1se * 3
+
+coef_lasso_fuerte <- coef(modelo_lasso, s = lambda_mas_fuerte)
+
+variables_lasso_fuerte <- rownames(coef_lasso_fuerte)[as.numeric(coef_lasso_fuerte) != 0]
+variables_lasso_fuerte <- variables_lasso_fuerte[variables_lasso_fuerte != "(Intercept)"]
+
+length(variables_lasso_fuerte)
+variables_lasso_fuerte
+```

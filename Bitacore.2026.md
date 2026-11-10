@@ -145,4 +145,22 @@ Seleccion Automatica de variables
 
 [slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W07-C01.pdf)
 
+### code
 
+[RmarkDown](https://github.com/adigenova/uohdm/blob/main/code/Seleccion_automatica_Variables.Rmd)A
+
+
+
+## 10/11/2026
+
+PCA I
+
+### slides
+
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/MD-W08-C01.pdf)
+
+
+### code
+
+[RmarkDown](https://github.com/adigenova/uohdm/blob/main/code/PCA_md_R.Rmd)

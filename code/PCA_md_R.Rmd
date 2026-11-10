@@ -1,0 +1,1625 @@
+---
+title: "PCA en R para Minería de Datos: explicación, visualización y predicción"
+subtitle: "Notebook all PCA"
+author: "Curso Minería de Datos -  Alex Di Genova"
+date: "2026"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: readable
+    code_folding: show
+  pdf_document:
+    toc: true
+    toc_depth: 3
+number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+
+set.seed(123)
+```
+
+# Objetivos
+
+Este RMarkdown desarrolla un análisis profundo de **PCA** (*Principal Component Analysis*) en R, desde un nivel basico a avanzado.
+
+El objetivo es mostrar PCA como una herramienta para:
+
+1. Explorar datos multivariados.
+2. Reducir dimensionalidad.
+3. Visualizar patrones complejos.
+4. Interpretar componentes principales usando *loadings*.
+5. Correlacionar componentes con metadata.
+6. Detectar outliers multivariados.
+7. Usar PCA como insumo para regresión lineal.
+8. Usar PCA como insumo para regresión logística.
+9. Trabajar con variables numéricas, categóricas y mixtas.
+10. Comparar PCA con modelos usando variables originales.
+
+Trabajaremos principalmente con:
+
+- `AmesHousing`: precios de casas.
+- `iris`: clasificación simple y visual.
+- `BreastCancer`: clasificación binaria.
+- `nycflights13::flights`: variables operacionales de vuelos.
+- Datos simulados para colinealidad y batch effects.
+
+# Instalación y carga de paquetes
+
+Ejecuta esta celda una vez si no tienes los paquetes instalados.
+
+```{r install-packages, eval=FALSE}
+packages <- c(
+  "tidyverse",
+  "AmesHousing",
+  "FactoMineR",
+  "factoextra",
+  "broom",
+  "nycflights13",
+  "ISLR2",
+  "janitor",
+  "patchwork",
+  "glmnet",
+  "MASS",
+  "pROC",
+  "mlbench",
+  "elasticnet"
+)
+
+installed <- rownames(installed.packages())
+to_install <- setdiff(packages, installed)
+
+if (length(to_install) > 0) {
+  install.packages(
+    to_install,
+    repos = "https://cloud.r-project.org",
+    dependencies = c("Depends", "Imports")
+  )
+}
+```
+
+```{r load-packages}
+library(tidyverse)
+library(AmesHousing)
+library(FactoMineR)
+library(factoextra)
+library(broom)
+library(nycflights13)
+library(ISLR2)
+library(janitor)
+library(patchwork)
+library(glmnet)
+library(MASS)
+library(pROC)
+library(mlbench)
+library(elasticnet)
+
+theme_set(theme_minimal())
+```
+
+# 1. Fundamento conceptual de PCA
+
+PCA busca transformar un conjunto de variables originales posiblemente correlacionadas en un nuevo conjunto de variables no correlacionadas llamadas **componentes principales**.
+
+Cada componente principal es una combinación lineal de las variables originales:
+
+$$
+PC_1 = w_1X_1 + w_2X_2 + \cdots + w_pX_p
+$$
+
+Donde:
+
+- $X_1, X_2, ..., X_p$ son las variables originales.
+- $w_1, w_2, ..., w_p$ son los pesos o *loadings*.
+- $PC_1$ es el primer componente principal.
+
+## Ideas clave
+
+- `PC1` captura la mayor varianza posible.
+- `PC2` captura la mayor varianza restante y es ortogonal a `PC1`.
+- Los componentes son combinaciones de las variables originales.
+- PCA no usa la variable respuesta; es un método no supervisado.
+- Los componentes principales pueden usarse luego en modelos supervisados.
+
+## ¿Por qué escalar?
+
+PCA depende de la varianza. Si una variable tiene unidades muy grandes, puede dominar el análisis. Por eso, casi siempre usamos:
+
+$$
+Z = \frac{X - \mu}{\sigma}
+$$
+
+En R, esto se hace con `scale()` o usando `prcomp(..., scale. = TRUE)`.
+
+# 2. Dataset principal: precios de casas con Ames Housing
+
+Usaremos el dataset `AmesHousing`, que contiene información detallada de viviendas vendidas en Ames, Iowa.
+
+Es un dataset apropiado para PCA porque incluye:
+
+- Variables numéricas.
+- Variables categóricas.
+- Variables ordinales.
+- Variables altamente correlacionadas.
+- Una variable respuesta continua: `Sale_Price`.
+
+```{r load-ames}
+ames_raw <- make_ames()
+
+dim(ames_raw)
+glimpse(ames_raw)
+```
+
+```{r ames-summary}
+ames_raw %>%
+  dplyr::select(Sale_Price, Gr_Liv_Area, Total_Bsmt_SF, Garage_Area, Year_Built, Overall_Qual) %>%
+  summary()
+```
+
+# 3. Exploración inicial del precio de casas
+
+```{r price-distribution}
+ames_raw %>%
+  ggplot(aes(x = Sale_Price)) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribución de precios de casas",
+    x = "Precio de venta",
+    y = "Número de casas"
+  )
+```
+
+```{r log-price-distribution}
+ames_raw %>%
+  ggplot(aes(x = log10(Sale_Price))) +
+  geom_histogram(bins = 50) +
+  labs(
+    title = "Distribución log10 del precio de casas",
+    x = "log10(Sale_Price)",
+    y = "Número de casas"
+  )
+```
+
+**Interpretación.**  
+El precio suele tener una distribución asimétrica a la derecha. En regresión, muchas veces conviene modelar `log10(Sale_Price)` para reducir la influencia de valores extremos.
+
+# 4. PCA con variables numéricas
+
+Primero usaremos solo variables numéricas. Esto permite entender el PCA clásico antes de avanzar a variables mixtas.
+
+```{r ames-numeric-prep}
+ames_num <- ames_raw %>%
+  dplyr::select(where(is.numeric)) %>%
+  dplyr::select(-Sale_Price) %>%
+  janitor::clean_names()
+
+# Eliminar columnas sin variación
+ames_num <- ames_num %>%
+  dplyr::select(where(~ sd(.x, na.rm = TRUE) > 0))
+
+# Imputación simple con mediana
+ames_num_imp <- ames_num %>%
+  mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
+
+dim(ames_num_imp)
+summary(ames_num_imp[, 1:min(8, ncol(ames_num_imp))])
+```
+
+```{r pca-ames}
+pca_ames <- prcomp(
+  ames_num_imp,
+  center = TRUE,
+  scale. = TRUE
+)
+
+summary(pca_ames)
+```
+
+## 4.1 Varianza explicada
+
+```{r variance-explained}
+pca_var <- pca_ames$sdev^2
+pca_var_exp <- pca_var / sum(pca_var)
+pca_var_cum <- cumsum(pca_var_exp)
+
+pca_summary <- tibble(
+  PC = paste0("PC", seq_along(pca_var_exp)),
+  varianza_explicada = pca_var_exp,
+  varianza_acumulada = pca_var_cum
+)
+
+pca_summary %>%
+  slice(1:15)
+```
+
+```{r scree-plots}
+p1 <- pca_summary %>%
+  slice(1:20) %>%
+  mutate(PC = factor(PC, levels = PC)) %>%
+  ggplot(aes(x = PC, y = varianza_explicada)) +
+  geom_col() +
+  geom_point() +
+  labs(
+    title = "Scree plot",
+    x = "Componente principal",
+    y = "Proporción de varianza explicada"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 <- pca_summary %>%
+  slice(1:20) %>%
+  mutate(n_componentes = row_number()) %>%
+  ggplot(aes(x = n_componentes, y = varianza_acumulada)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0.80, linetype = "dashed") +
+  geom_hline(yintercept = 0.90, linetype = "dashed") +
+  scale_x_continuous(breaks = 1:20) +
+  labs(
+    title = "Varianza explicada acumulada",
+    x = "Número de componentes",
+    y = "Varianza acumulada"
+  )
+
+p1 / p2
+```
+
+```{r components-80-90}
+n80 <- which(pca_var_cum >= 0.80)[1]
+n90 <- which(pca_var_cum >= 0.90)[1]
+n50 <- which(pca_var_cum >= 0.50)[1]
+
+tibble(
+  componentes_50 = n50,
+  componentes_80 = n80,
+  componentes_90 = n90
+)
+```
+
+**Interpretación.**  
+Si usamos pocos componentes, perdemos información pero ganamos simplicidad. Si usamos muchos componentes, conservamos información pero reducimos menos la dimensionalidad. Para predicción, conviene elegir el número de componentes con validación cruzada.
+
+# 5. Loadings: interpretación de componentes
+
+Los *loadings* indican cuánto contribuye cada variable original a cada componente. Un loading alto positivo o negativo indica que la variable pesa mucho en ese componente.
+
+```{r loadings-ames}
+loadings_ames <- as.data.frame(pca_ames$rotation) %>%
+  rownames_to_column("variable")
+
+loadings_ames %>%
+  dplyr::select(variable, PC1, PC2, PC3, PC4, PC5) %>%
+  arrange(desc(abs(PC1))) %>%
+  head(15)
+```
+
+```{r loading-function}
+plot_loadings <- function(loadings_df, pc = "PC1", top_n = 15) {
+  loadings_df %>%
+    dplyr::select(variable, all_of(pc)) %>%
+    mutate(abs_loading = abs(.data[[pc]])) %>%
+    arrange(desc(abs_loading)) %>%
+    slice(1:top_n) %>%
+    mutate(variable = reorder(variable, .data[[pc]])) %>%
+    ggplot(aes(x = variable, y = .data[[pc]])) +
+    geom_col() +
+    coord_flip() +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(
+      title = paste("Variables con mayor contribución a", pc),
+      x = "Variable",
+      y = "Loading"
+    )
+}
+```
+
+```{r loading-plots}
+plot_loadings(loadings_ames, "PC1", 15)
+plot_loadings(loadings_ames, "PC2", 15)
+plot_loadings(loadings_ames, "PC3", 15)
+```
+
+## Cómo interpretar los loadings
+
+Para interpretar un componente:
+
+1. Identifica variables con mayor loading absoluto.
+2. Observa signos positivos y negativos.
+3. Pregunta si representan tamaño, calidad, edad, ubicación, densidad u otro concepto.
+4. Correlaciona el componente con metadata.
+5. Visualiza el componente contra variables relevantes.
+
+Ejemplo:
+
+- Si `gr_liv_area`, `garage_area`, `total_bsmt_sf` y `first_flr_sf` pesan fuerte en PC1, probablemente PC1 representa tamaño global de la casa.
+- Si `year_built` y `year_remod_add` pesan fuerte, puede representar antigüedad o modernidad.
+
+# 6. Scores de PCA y correlación con metadata
+
+Los scores son las coordenadas de cada observación en el espacio PCA.
+
+Ahora correlacionaremos los PCs con metadata:
+
+- `Sale_Price`
+- `Overall_Qual`
+- `Year_Built`
+- `Gr_Liv_Area`
+- `Neighborhood`
+
+```{r pca-scores-metadata}
+scores_ames <- as.data.frame(pca_ames$x) %>%
+  as_tibble()
+
+ames_metadata <- ames_raw %>%
+  transmute(
+    Sale_Price = Sale_Price,
+    log_Sale_Price = log10(Sale_Price),
+    Overall_Qual = as.numeric(Overall_Qual),
+    Year_Built = Year_Built,
+    Gr_Liv_Area = Gr_Liv_Area,
+    Total_Bsmt_SF = Total_Bsmt_SF,
+    Garage_Area = Garage_Area,
+    Neighborhood = Neighborhood
+  )
+
+scores_metadata <- bind_cols(scores_ames, ames_metadata)
+
+scores_metadata %>%
+  dplyr::select(PC1:PC5, Sale_Price, log_Sale_Price, Overall_Qual, Year_Built, Gr_Liv_Area) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  round(2)
+```
+
+```{r pc-metadata-heatmap}
+corr_pc_metadata <- scores_metadata %>%
+  dplyr::select(PC1:PC10, log_Sale_Price, Overall_Qual, Year_Built, Gr_Liv_Area, Total_Bsmt_SF, Garage_Area) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  filter(str_detect(variable, "^PC")) %>%
+  pivot_longer(-variable, names_to = "metadata", values_to = "correlation")
+
+corr_pc_metadata %>%
+  ggplot(aes(x = metadata, y = variable, fill = correlation)) +
+  geom_tile() +
+  geom_text(aes(label = round(correlation, 2)), size = 3) +
+  scale_fill_gradient2(limits = c(-1, 1)) +
+  labs(
+    title = "Correlación entre componentes principales y metadata",
+    x = "Metadata",
+    y = "Componente principal",
+    fill = "Correlación"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+**Interpretación.**  
+La correlación entre PCs y metadata traduce componentes abstractos a conceptos interpretables. Un PC asociado a `Gr_Liv_Area`, `Garage_Area` y `Total_Bsmt_SF` puede representar tamaño de vivienda. Un PC asociado a `Year_Built` puede representar antigüedad o modernidad.
+
+# 7. Visualización PCA 2D
+
+```{r pca-plot-price}
+scores_metadata %>%
+  ggplot(aes(x = PC1, y = PC2, color = log_Sale_Price)) +
+  geom_point(alpha = 0.6, size = 1.6) +
+  scale_color_viridis_c() +
+  labs(
+    title = "PCA de viviendas Ames coloreado por precio",
+    x = paste0("PC1 (", round(pca_var_exp[1] * 100, 1), "% varianza)"),
+    y = paste0("PC2 (", round(pca_var_exp[2] * 100, 1), "% varianza)"),
+    color = "log10 precio"
+  )
+```
+
+```{r pca-plot-quality}
+scores_metadata %>%
+  ggplot(aes(x = PC1, y = PC2, color = Overall_Qual)) +
+  geom_point(alpha = 0.6, size = 1.6) +
+  scale_color_viridis_c() +
+  labs(
+    title = "PCA coloreado por calidad global",
+    x = "PC1",
+    y = "PC2",
+    color = "Overall Qual"
+  )
+```
+
+```{r pca-plot-neighborhood}
+scores_metadata %>%
+  ggplot(aes(x = PC1, y = PC2, color = Neighborhood)) +
+  geom_point(alpha = 0.7, size = 1.3) +
+  labs(
+    title = "PCA coloreado por barrio",
+    x = "PC1",
+    y = "PC2",
+    color = "Neighborhood"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+# 8. Biplot con `factoextra`
+
+El biplot muestra observaciones y variables en el mismo espacio. Debido a que Ames tiene muchas observaciones, se muestra una submuestra.
+
+```{r pca-biplot}
+set.seed(123)
+
+sample_ids <- sample(seq_len(nrow(ames_num_imp)), size = 600)
+
+ames_subset=ames_num_imp[sample_ids, ]
+zero_var_cols <- names(ames_subset)[
+  purrr::map_lgl(ames_subset, ~ sd(.x, na.rm = TRUE) == 0)
+]
+#we remove all zero sd columns
+ames_subset <- ames_subset %>%
+  dplyr::select(-all_of(zero_var_cols))
+
+pca_ames_sample <- prcomp(
+  ames_subset,
+  center = TRUE,
+  scale. = TRUE
+)
+
+fviz_pca_biplot(
+  pca_ames_sample,
+  repel = TRUE,
+  col.var = "black",
+  col.ind = "gray60",
+  label = "var",
+  #habillage = NULL
+) +
+  labs(title = "Biplot PCA de Ames Housing, submuestra")
+```
+
+# 9. Detección de outliers multivariados con PCA
+
+Un outlier multivariado puede no ser extremo en una sola variable, pero sí tener una combinación inusual de variables.
+
+Usaremos dos estrategias:
+
+1. Observaciones extremas en PC1 y PC2.
+2. Error de reconstrucción usando pocos componentes.
+
+```{r pc-outliers-distance}
+scores_metadata <- scores_metadata %>%
+  mutate(
+    dist_pc12 = sqrt(PC1^2 + PC2^2)
+  )
+
+scores_metadata %>%
+  arrange(desc(dist_pc12)) %>%
+  dplyr::select(PC1, PC2, dist_pc12, Sale_Price, Overall_Qual, Gr_Liv_Area, Neighborhood) %>%
+  head(10)
+```
+
+```{r pc-outliers-plot}
+scores_metadata %>%
+  ggplot(aes(x = PC1, y = PC2)) +
+  geom_point(alpha = 0.4) +
+  geom_point(
+    data = scores_metadata %>% slice_max(dist_pc12, n = 20),
+    aes(x = PC1, y = PC2),
+    size = 2
+  ) +
+  labs(
+    title = "Observaciones extremas en el espacio PC1-PC2",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+## Error de reconstrucción
+
+Si retenemos pocos componentes, podemos reconstruir aproximadamente las variables originales. Observaciones con alto error de reconstrucción pueden ser casos raros.
+
+Volver desde los componentes principales hacia una aproximación de los datos originales.
+
+$PC1, PC2, PC3, ...  ->  datos\_reconstruidos$
+
+
+Pero si usamos solo algunos componentes, por ejemplo los que explican 80% de la varianza, la reconstrucción no es perfecta. Esa diferencia entre datos originales y datos reconstruidos es el error de reconstrucción.
+
+```{r reconstruction-error}
+#vamos a reconstruir los datos usando solo los componentes que explican el 80% de la variabilidad total.
+k <- n80
+#los scores son las coordenadas de cada casa en los componentes principales.
+scores_k <- pca_ames$x[, 1:k] 
+#Cada fila sigue siendo una casa.
+#Cada columna ahora es un componente principal.
+
+#contiene los loadings, es decir, los pesos que dicen cómo cada componente se relaciona con las variables originales.
+rotation_k <- pca_ames$rotation[, 1:k]
+#dice cómo traducir ese espacio PCA de vuelta a las variables originales.
+
+#Escala los datos originales.
+X_scaled <- scale(ames_num_imp)
+
+#Se multiplican los scores por los loadings transpuestos.
+# Conceptualmente : datos reconstruidos = scores PCA × loadings
+# PCs de cada casa × contribución de variables a cada PC
+X_reconstructed <- scores_k %*% t(rotation_k)
+
+#Qué tan mal se reconstruye cada casa usando solo los primeros componentes principales.
+reconstruction_error <- rowMeans((X_scaled - X_reconstructed)^2)
+
+outlier_recon <- scores_metadata %>%
+  mutate(reconstruction_error = reconstruction_error) %>%
+  arrange(desc(reconstruction_error))
+
+outlier_recon %>%
+  dplyr::select(reconstruction_error, Sale_Price, Overall_Qual, Gr_Liv_Area, Neighborhood) %>%
+  head(10)
+```
+
+```{r rcons}
+head(outlier_recon)
+dim(outlier_recon)
+```
+
+```{r reconstruction-outlier-plot}
+threshold <- quantile(outlier_recon$reconstruction_error, 0.99)
+
+outlier_recon %>%
+  mutate(is_outlier = reconstruction_error >= threshold) %>%
+  ggplot(aes(x = PC1, y = PC2, color = is_outlier)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Outliers detectados por error de reconstrucción",
+    x = "PC1",
+    y = "PC2",
+    color = "Outlier"
+  )
+```
+
+¿Qué significa un alto error de reconstrucción?
+
+Una casa con alto error de reconstrucción puede ser rara porque tiene una combinación inusual, por ejemplo:
+
+- casa muy grande pero precio bajo;
+- casa pequeña pero precio muy alto;
+- casa antigua pero con alta calidad;
+- casa en barrio caro pero con baja calidad;
+- casa con gran superficie pero sin garaje;
+- combinación rara de sótano, superficie, calidad y año de construcción.
+
+No necesariamente es un error. Puede ser:
+
+- Un outlier real.
+- Un caso interesante.
+- Un dato mal registrado.
+- Una propiedad atípica.
+- Una combinación minoritaria no capturada por los primeros PCs.
+
+# 10. PCA y regresión lineal: Principal Component Regression
+
+Ahora usamos PCA para predecir `Sale_Price`.
+
+Compararemos:
+
+1. Regresión lineal con variables originales.
+2. Regresión lineal con componentes principales.
+3. Ridge regression con variables originales.
+4. Modelo con PCA elegido por validación cruzada manual.
+
+
+```{r regression-data}
+# limpio los nombres y agrego log10 del precio de venta. y saco el Sales_Price
+# y selecciono las variables numericas (where(is.numeric))
+ames_model <- ames_raw %>%
+  mutate(log_Sale_Price = log10(Sale_Price)) %>%
+  dplyr::select(log_Sale_Price, where(is.numeric)) %>%
+  dplyr::select(-Sale_Price) %>%
+  janitor::clean_names()
+
+# reemplazo los na por la mediana
+ames_model <- ames_model %>%
+  dplyr::select(where(~ n_distinct(.x, na.rm = TRUE) > 1)) %>%
+  mutate(across(everything(), ~ ifelse(is.na(.x), median(.x, na.rm = TRUE), .x)))
+
+set.seed(123)
+# selecciono el 70%de los datos
+idx <- sample(seq_len(nrow(ames_model)), size = floor(0.70 * nrow(ames_model)))
+# selecciono el 70% de las filas del data.frame
+ames_train <- ames_model[idx, ]
+# selecciono el otro 30% notar -idx
+ames_test <- ames_model[-idx, ]
+
+x_train <- ames_train %>% dplyr::select(-log_sale_price)
+x_test <- ames_test %>% dplyr::select(-log_sale_price)
+y_train <- ames_train$log_sale_price
+y_test <- ames_test$log_sale_price
+```
+
+```{r metric-function}
+regression_metrics <- function(truth, estimate, model_name) {
+  tibble(
+    modelo = model_name,
+    RMSE = sqrt(mean((truth - estimate)^2)),
+    MAE = mean(abs(truth - estimate)),
+    R2 = 1 - sum((truth - estimate)^2) / sum((truth - mean(truth))^2)
+  )
+}
+```
+
+## 10.1 Regresión lineal con variables originales
+
+```{r lm-original}
+lm_original_data <- bind_cols(
+  tibble(log_sale_price = y_train),
+  as_tibble(scale(x_train))
+)
+
+lm_original <- lm(log_sale_price ~ ., data = lm_original_data)
+
+x_test_scaled <- scale(
+  x_test,
+  center = attr(scale(x_train), "scaled:center"),
+  scale = attr(scale(x_train), "scaled:scale")
+)
+
+pred_lm_original <- predict(
+  lm_original,
+  newdata = as_tibble(x_test_scaled)
+)
+
+metrics_lm_original <- regression_metrics(
+  y_test,
+  pred_lm_original,
+  "Regresión lineal original"
+)
+
+metrics_lm_original
+```
+
+## 10.2 PCA + regresión lineal
+
+```{r pcr-90}
+pca_train <- prcomp(
+  x_train,
+  center = TRUE,
+  scale. = TRUE
+)
+
+var_pcr <- pca_train$sdev^2 / sum(pca_train$sdev^2)
+cum_pcr <- cumsum(var_pcr)
+k90 <- which(cum_pcr >= 0.9)[1]
+
+k90
+```
+
+```{r fit-pcr-90}
+train_pcs_90 <- as.data.frame(pca_train$x[, 1:k90, drop = FALSE])
+train_pcs_90$log_sale_price <- y_train
+
+test_pcs_90 <- predict(pca_train, newdata = x_test)[, 1:k90, drop = FALSE] %>%
+  as.data.frame()
+
+lm_pcr_90 <- lm(log_sale_price ~ ., data = train_pcs_90)
+
+pred_pcr_90 <- predict(lm_pcr_90, newdata = test_pcs_90)
+
+metrics_pcr_90 <- regression_metrics(
+  y_test,
+  pred_pcr_90,
+  paste0("PCAR 80% varianza, ", k90, " PCs")
+)
+
+metrics_pcr_90
+```
+
+## 10.3 Ridge regression
+
+```{r ridge-model}
+x_train_matrix <- model.matrix(~ ., data = x_train)[, -1]
+x_test_matrix <- model.matrix(~ ., data = x_test)[, -1]
+
+cv_ridge <- cv.glmnet(
+  x_train_matrix,
+  y_train,
+  alpha = 0,
+  standardize = TRUE
+)
+
+plot(cv_ridge)
+
+best_lambda <- cv_ridge$lambda.min
+best_lambda
+```
+
+```{r ridge-prediction}
+pred_ridge <- predict(
+  cv_ridge,
+  newx = x_test_matrix,
+  s = "lambda.min"
+) %>%
+  as.numeric()
+
+metrics_ridge <- regression_metrics(
+  y_test,
+  pred_ridge,
+  "Ridge original"
+)
+
+metrics_ridge
+```
+
+## 10.4 Selección manual de número de PCs con validación cruzada
+
+```{r pcr-cv-function}
+pcr_cv_rmse <- function(x, y, k_values = 1:30, v = 5) {
+  set.seed(123)
+  folds <- sample(rep(1:v, length.out = nrow(x)))
+
+  results <- map_dfr(k_values, function(k) {
+    fold_rmse <- map_dbl(1:v, function(fold_id) {
+      train_idx <- which(folds != fold_id)
+      valid_idx <- which(folds == fold_id)
+
+      x_tr <- x[train_idx, , drop = FALSE]
+      x_va <- x[valid_idx, , drop = FALSE]
+      y_tr <- y[train_idx]
+      y_va <- y[valid_idx]
+
+      pca_cv <- prcomp(x_tr, center = TRUE, scale. = TRUE)
+
+      train_pcs <- as.data.frame(pca_cv$x[, 1:k, drop = FALSE])
+      train_pcs$y <- y_tr
+
+      valid_pcs <- predict(pca_cv, newdata = x_va)[, 1:k, drop = FALSE] %>%
+        as.data.frame()
+
+      model <- lm(y ~ ., data = train_pcs)
+      pred <- predict(model, newdata = valid_pcs)
+
+      sqrt(mean((y_va - pred)^2))
+    })
+
+    tibble(
+      n_components = k,
+      rmse_cv = mean(fold_rmse),
+      rmse_sd = sd(fold_rmse)
+    )
+  })
+
+  results
+}
+```
+
+```{r run-pcr-cv}
+max_k <- min(30, ncol(x_train))
+
+pcr_cv_results <- pcr_cv_rmse(
+  x = as.data.frame(x_train),
+  y = y_train,
+  k_values = 1:max_k,
+  v = 5
+)
+
+pcr_cv_results %>%
+  arrange(rmse_cv) %>%
+  head(10)
+```
+
+```{r plot-pcr-cv}
+pcr_cv_results %>%
+  ggplot(aes(x = n_components, y = rmse_cv)) +
+  geom_line() +
+  geom_point() +
+  labs(
+    title = "Selección de número de PCs por validación cruzada",
+    x = "Número de componentes",
+    y = "RMSE promedio CV"
+  )
+```
+
+```{r final-pcr-cv}
+best_k <- pcr_cv_results %>%
+  arrange(rmse_cv) %>%
+  slice(1) %>%
+  pull(n_components)
+
+train_pcs_best <- as.data.frame(pca_train$x[, 1:best_k, drop = FALSE])
+train_pcs_best$log_sale_price <- y_train
+
+test_pcs_best <- predict(pca_train, newdata = x_test)[, 1:best_k, drop = FALSE] %>%
+  as.data.frame()
+
+lm_pcr_best <- lm(log_sale_price ~ ., data = train_pcs_best)
+
+pred_pcr_best <- predict(lm_pcr_best, newdata = test_pcs_best)
+
+metrics_pcr_best <- regression_metrics(
+  y_test,
+  pred_pcr_best,
+  paste0("PCR CV, ", best_k, " PCs")
+)
+
+bind_rows(
+  metrics_lm_original,
+  metrics_pcr_90,
+  metrics_pcr_best,
+  metrics_ridge
+)
+```
+
+**Discusión.**  
+PCA no siempre mejora la predicción. Su valor depende del objetivo. Para explicación y visualización suele ser muy útil. Para regresión lineal con colinealidad puede ayudar. Para predicción pura, Ridge o Lasso pueden competir o superar PCA.
+
+# 11. Visualización de predicciones
+
+```{r observed-predicted-pcr}
+tibble(
+  observado = y_test,
+  predicho = pred_pcr_best
+) %>%
+  ggplot(aes(x = predicho, y = observado)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  labs(
+    title = "PCR: observado vs predicho",
+    x = "log10 precio predicho",
+    y = "log10 precio observado"
+  )
+```
+
+```{r residual-pcr}
+tibble(
+  residual = y_test - pred_pcr_best
+) %>%
+  ggplot(aes(x = residual)) +
+  geom_histogram(bins = 40) +
+  labs(
+    title = "Distribución de residuos: PCR",
+    x = "Residuo",
+    y = "Frecuencia"
+  )
+```
+
+# 12. PCA con variables mixtas: numéricas + categóricas
+
+PCA clásico requiere variables numéricas. Con variables categóricas hay varias estrategias:
+
+1. Usar solo variables numéricas.
+2. Convertir categóricas a variables dummy y luego aplicar PCA (no recomendado).
+3. Usar métodos más apropiados para variables mixtas, como FAMD.
+4. Usar MCA si todas las variables son categóricas.
+
+
+# 13. FAMD: alternativa para variables mixtas
+
+FAMD significa **Factor Analysis of Mixed Data**. Es una extensión de PCA diseñada para datasets con variables numéricas y categóricas.
+
+```{r famd-data}
+ames_famd_data <- ames_raw %>%
+  dplyr::select(
+    Sale_Price,
+    Gr_Liv_Area, Total_Bsmt_SF, Garage_Area, Year_Built,
+    Overall_Qual, Neighborhood, Bldg_Type, House_Style, Central_Air
+  ) %>%
+  mutate(
+    log_Sale_Price = log10(Sale_Price)
+  ) %>%
+  dplyr::select(-Sale_Price) %>%
+  drop_na()
+
+set.seed(123)
+ames_famd_sample <- ames_famd_data %>%
+  slice_sample(n = 800)
+
+famd_res <- FAMD(
+  ames_famd_sample %>% dplyr::select(-log_Sale_Price),
+  ncp = 5,
+  graph = FALSE
+)
+```
+
+```{r famd-summary}
+summary(famd_res)
+```
+
+```{r famd-scree}
+fviz_screeplot(famd_res) +
+  labs(title = "Scree plot FAMD")
+```
+
+```{r famd-var}
+fviz_famd_var(famd_res, repel = TRUE) +
+  labs(title = "Variables en FAMD")
+```
+
+```{r famd-plot}
+famd_scores <- as_tibble(famd_res$ind$coord) %>%
+  bind_cols(ames_famd_sample %>% dplyr::select(log_Sale_Price, Neighborhood))
+
+famd_scores %>%
+  ggplot(aes(x = Dim.1, y = Dim.2, color = log_Sale_Price)) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c() +
+  labs(
+    title = "FAMD en Ames Housing coloreado por precio",
+    x = "Dimensión 1",
+    y = "Dimensión 2",
+    color = "log10 precio"
+  )
+```
+
+# 14. PCA y regresión logística: Breast Cancer
+
+Ahora usaremos PCA en clasificación binaria. El objetivo es predecir si un tumor es maligno o benigno usando variables morfológicas.
+
+```{r breast-cancer-data}
+data("BreastCancer", package = "mlbench")
+
+bc <- BreastCancer %>%
+  as_tibble() %>%
+  dplyr::select(-Id) %>%
+  mutate(
+    Class = factor(Class),
+    across(-Class, ~ as.numeric(as.character(.x)))
+  ) %>%
+  drop_na()
+
+glimpse(bc)
+table(bc$Class)
+```
+
+```{r breast-split}
+set.seed(123)
+
+idx_bc <- sample(seq_len(nrow(bc)), size = floor(0.70 * nrow(bc)))
+
+bc_train <- bc[idx_bc, ]
+bc_test <- bc[-idx_bc, ]
+
+x_train_bc <- bc_train %>% dplyr::select(-Class)
+x_test_bc <- bc_test %>% dplyr::select(-Class)
+
+y_train_bc <- bc_train$Class
+y_test_bc <- bc_test$Class
+```
+
+## 14.1 Regresión logística con variables originales
+
+```{r logit-original}
+x_train_bc_scaled <- scale(x_train_bc)
+
+train_bc_original <- as.data.frame(x_train_bc_scaled)
+train_bc_original$Class <- y_train_bc
+
+x_test_bc_scaled <- scale(
+  x_test_bc,
+  center = attr(x_train_bc_scaled, "scaled:center"),
+  scale = attr(x_train_bc_scaled, "scaled:scale")
+)
+
+test_bc_original <- as.data.frame(x_test_bc_scaled)
+
+logit_original <- glm(
+  Class ~ .,
+  data = train_bc_original,
+  family = binomial
+)
+
+prob_original <- predict(
+  logit_original,
+  newdata = test_bc_original,
+  type = "response"
+)
+
+pred_original <- ifelse(prob_original > 0.5, "malignant", "benign") %>%
+  factor(levels = levels(y_test_bc))
+
+mean(pred_original == y_test_bc)
+table(real = y_test_bc, predicho = pred_original)
+```
+
+## 14.2 PCA + regresión logística
+
+```{r logit-pca}
+pca_bc <- prcomp(
+  x_train_bc,
+  center = TRUE,
+  scale. = TRUE
+)
+
+var_bc <- pca_bc$sdev^2 / sum(pca_bc$sdev^2)
+cum_bc <- cumsum(var_bc)
+k_bc_90 <- which(cum_bc >= 0.90)[1]
+
+k_bc_90
+```
+
+```{r fit-logit-pca}
+train_bc_pcs <- as.data.frame(pca_bc$x[, 1:k_bc_90, drop = FALSE])
+train_bc_pcs$Class <- y_train_bc
+
+test_bc_pcs <- predict(pca_bc, newdata = x_test_bc)[, 1:k_bc_90, drop = FALSE] %>%
+  as.data.frame()
+
+logit_pca <- glm(
+  Class ~ .,
+  data = train_bc_pcs,
+  family = binomial
+)
+
+prob_pca <- predict(
+  logit_pca,
+  newdata = test_bc_pcs,
+  type = "response"
+)
+
+pred_pca <- ifelse(prob_pca > 0.5, "malignant", "benign") %>%
+  factor(levels = levels(y_test_bc))
+
+mean(pred_pca == y_test_bc)
+table(real = y_test_bc, predicho = pred_pca)
+```
+
+```{r roc-pca}
+roc_obj <- roc(
+  response = y_test_bc,
+  predictor = as.numeric(prob_pca),
+  levels = levels(y_test_bc)
+)
+
+auc(roc_obj)
+plot(roc_obj, main = "ROC: PCA + regresión logística")
+```
+
+## 14.3 Visualización PCA para Breast Cancer
+
+```{r breast-pca-visualization}
+pca_bc_full <- prcomp(
+  bc %>% dplyr::select(-Class),
+  center = TRUE,
+  scale. = TRUE
+)
+
+bc_scores <- as_tibble(pca_bc_full$x) %>%
+  bind_cols(bc %>% dplyr::select(Class))
+
+bc_scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = Class)) +
+  geom_point(alpha = 0.7) +
+  labs(
+    title = "PCA de Breast Cancer coloreado por clase",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+```{r breast-loadings}
+bc_loadings <- as.data.frame(pca_bc_full$rotation) %>%
+  rownames_to_column("variable")
+
+plot_loadings(bc_loadings, "PC1", 10)
+plot_loadings(bc_loadings, "PC2", 10)
+```
+
+**Interpretación.**  
+Si las clases se separan en PC1 y PC2, significa que los principales ejes de variación morfológica están asociados a la condición tumoral.
+
+# 15. PCA con iris: clasificación simple y didáctica
+
+```{r iris-pca}
+iris_tbl <- as_tibble(iris)
+
+pca_iris <- prcomp(
+  iris_tbl %>% dplyr::select(-Species),
+  center = TRUE,
+  scale. = TRUE
+)
+
+summary(pca_iris)
+```
+
+```{r iris-pca-plot}
+iris_scores <- as_tibble(pca_iris$x) %>%
+  bind_cols(iris_tbl %>% dplyr::select(Species))
+
+iris_scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = Species)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  labs(
+    title = "PCA de iris",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+```{r iris-loadings}
+iris_loadings <- as.data.frame(pca_iris$rotation) %>%
+  rownames_to_column("variable")
+
+iris_loadings
+```
+
+```{r iris-biplot}
+fviz_pca_biplot(
+  pca_iris,
+  habillage = iris$Species,
+  repel = TRUE,
+  addEllipses = TRUE
+) +
+  labs(title = "Biplot PCA de iris")
+```
+
+## Preguntas 
+
+1. ¿Qué especie se separa mejor?
+2. ¿Qué variables dominan PC1?
+3. ¿Qué variables dominan PC2?
+4. ¿Por qué `Petal.Length` y `Petal.Width` son tan importantes?
+5. ¿Hay solapamiento entre `versicolor` y `virginica`?
+
+# 16. PCA para `flights`: retrasos, distancia y velocidad
+
+Usaremos `nycflights13::flights` para mostrar PCA en variables operacionales.
+
+Creamos variables:
+
+- `gain = dep_delay - arr_delay`
+- `speed = distance / air_time * 60`
+- `delayed`: vuelo atrasado si `arr_delay > 15`.
+
+```{r flights-pca-data}
+flights_pca <- flights %>%
+  dplyr::select(month, dep_delay, arr_delay, distance, air_time, carrier, origin) %>%
+  drop_na() %>%
+  mutate(
+    gain = dep_delay - arr_delay,
+    speed = distance / air_time * 60,
+    delayed = if_else(arr_delay > 15, "delayed", "not_delayed"),
+    delayed = factor(delayed)
+  ) %>%
+  filter(speed > 100, speed < 800)
+
+glimpse(flights_pca)
+```
+
+```{r flights-pca}
+flights_num <- flights_pca %>%
+  dplyr::select(month, dep_delay, arr_delay, distance, air_time, gain, speed)
+
+pca_flights <- prcomp(
+  flights_num,
+  center = TRUE,
+  scale. = TRUE
+)
+
+summary(pca_flights)
+```
+
+```{r flights-pca-plot}
+flights_scores <- as_tibble(pca_flights$x) %>%
+  bind_cols(flights_pca %>% dplyr::select(carrier, origin, delayed, arr_delay, dep_delay))
+
+flights_scores %>%
+  slice_sample(n = 5000) %>%
+  ggplot(aes(x = PC1, y = PC2, color = delayed)) +
+  geom_point(alpha = 0.5) +
+  labs(
+    title = "PCA de vuelos coloreado por retraso de llegada",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+```{r flights-loadings}
+flights_loadings <- as.data.frame(pca_flights$rotation) %>%
+  rownames_to_column("variable")
+
+flights_loadings
+plot_loadings(flights_loadings, "PC1", 7)
+plot_loadings(flights_loadings, "PC2", 7)
+```
+
+```{r flights-correlations}
+flights_scores %>%
+  dplyr::select(PC1:PC5, arr_delay, dep_delay) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  round(2)
+```
+
+**Interpretación posible.**  
+En `flights`, un componente puede capturar retrasos (`dep_delay`, `arr_delay`), otro puede capturar escala del vuelo (`distance`, `air_time`) y otro eficiencia o recuperación de tiempo (`gain`, `speed`).
+
+# 17. PCA y colinealidad: ejemplo simulado
+
+PCA es muy útil cuando hay variables altamente correlacionadas.
+
+```{r collinearity-simulation}
+set.seed(123)
+
+n <- 500
+x1 <- rnorm(n)
+x2 <- x1 + rnorm(n, sd = 0.1)
+x3 <- x1 - x2 + rnorm(n, sd = 0.1)
+y <- 3*x1 + 3*x2 + rnorm(n, sd = 1)
+
+sim_data <- tibble(x1, x2, x3, y)
+
+cor(sim_data)
+
+simple_model=lm(y ~ x2, data=sim_data)
+```
+
+```{r collinearity-pca}
+sim_pca <- prcomp(
+  sim_data %>% dplyr::select(x1, x2, x3),
+  center = TRUE,
+  scale. = TRUE
+)
+
+summary(sim_pca)
+
+as.data.frame(sim_pca$rotation) %>%
+  rownames_to_column("variable")
+```
+
+```{r lm-collinearity-vs-pca}
+sim_scores <- as_tibble(sim_pca$x) %>%
+  mutate(y = sim_data$y)
+
+lm_original_sim <- lm(y ~ x1 + x2 + x3, data = sim_data)
+lm_pca_sim <- lm(y ~ PC1 + PC2, data = sim_scores)
+
+summary(lm_original_sim)
+summary(lm_pca_sim)
+
+
+lm_one_pc=lm(y~PC1, data=sim_scores)
+
+lm_one_pc=lm(y~PC2, data=sim_scores)
+
+
+sim_scores %>% ggplot(aes(x=PC1,y=PC2)) + geom_point()
+
+sim_data %>% ggplot(aes(x=x1,y=x3)) + geom_point()
+
+```
+
+**Discusión.**  
+El modelo original puede tener coeficientes inestables por colinealidad. El modelo con PCs usa predictores ortogonales, lo que mejora estabilidad matemática, aunque reduce interpretabilidad directa.
+
+# 18. PCA versus regularización
+
+PCA y Ridge/Lasso resuelven problemas relacionados, pero no equivalentes.
+
+## PCA
+
+- Crea nuevas variables.
+- No usa la respuesta.
+- Reduce dimensión.
+- Mejora colinealidad.
+- Puede dificultar interpretación.
+
+## Ridge
+
+- Mantiene variables originales.
+- Usa la respuesta.
+- Penaliza coeficientes grandes.
+- Maneja colinealidad.
+- Conserva interpretabilidad parcial.
+
+## Lasso
+
+- Puede seleccionar variables.
+- Útil cuando se quiere un modelo más parsimonioso.
+
+# 19. Sparse PCA
+
+Sparse PCA busca componentes con pocos loadings distintos de cero. Esto puede facilitar interpretación.
+
+```{r sparse-pca}
+corr_price <- ames_raw %>%
+  dplyr::select(where(is.numeric)) %>%
+  cor(use = "pairwise.complete.obs") %>%
+  as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  dplyr::select(variable, Sale_Price) %>%
+  arrange(desc(abs(Sale_Price)))
+
+top_vars <- corr_price %>%
+  filter(variable != "Sale_Price") %>%
+  slice(1:15) %>%
+  pull(variable) %>%
+  janitor::make_clean_names()
+
+X_top <- ames_num_imp %>%
+  dplyr::select(any_of(top_vars)) %>%
+  scale()
+
+spca_res <- elasticnet::spca(
+  X_top,
+  K = 3,
+  type = "predictor",
+  sparse = "varnum",
+  para = c(5, 5, 5)
+)
+
+spca_loadings <- as.data.frame(spca_res$loadings) %>%
+  rownames_to_column("variable")
+
+spca_loadings %>% arrange(desc(abs(PC2)))
+```
+
+
+# 20. PCA, batches y metadata técnica
+
+En datos reales, especialmente ómicos, PCA puede capturar efectos técnicos.
+
+Ejemplos de metadata técnica:
+
+- Batch de secuenciación.
+- Fecha de procesamiento.
+- Centro clínico.
+- Operador.
+- Plataforma.
+- Profundidad de secuenciación.
+- Porcentaje de lecturas mapeadas.
+- RIN en RNA-seq.
+- Porcentaje tumoral.
+- Tiempo de isquemia.
+
+**Recomendación.**  
+Siempre correlaciona PCs con metadata técnica y biológica. Si PC1 se asocia más con batch que con biología, el análisis puede estar dominado por artefactos.
+
+# 22. Ejemplo simulado de batch effect
+
+Simulamos datos donde PC1 captura batch, no biología.
+
+```{r batch-simulation}
+set.seed(123)
+
+n <- 200
+p <- 50
+
+group <- rep(c("control", "case"), each = n/2)
+batch <- rep(c("batch1", "batch2"), times = n/2)
+
+X <- matrix(rnorm(n*p), nrow = n, ncol = p)
+
+# Efecto biológico débil en variables 1:5
+X[group == "case", 1:5] <- X[group == "case", 1:5] + 0.5
+
+# Batch effect fuerte en variables 20:40
+X[batch == "batch2", 20:40] <- X[batch == "batch2", 20:40] + 2
+
+sim_batch <- as_tibble(X)
+colnames(sim_batch) <- paste0("var", 1:p)
+
+pca_batch <- prcomp(sim_batch, center = TRUE, scale. = TRUE)
+
+batch_scores <- as_tibble(pca_batch$x) %>%
+  mutate(group = group, batch = batch)
+
+batch_scores %>%
+  ggplot(aes(x = PC1, y = PC2, color = batch, shape = group)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  labs(
+    title = "PCA dominado por batch effect",
+    x = "PC1",
+    y = "PC2"
+  )
+```
+
+```{r batch-correlations}
+batch_scores %>%
+  mutate(
+    group_num = if_else(group == "case", 1, 0),
+    batch_num = if_else(batch == "batch2", 1, 0)
+  ) %>%
+  dplyr::select(PC1:PC5, group_num, batch_num) %>%
+  cor() %>%
+  round(2)
+```
+
+**Interpretación.**  
+Aunque existe una señal biológica simulada, el batch effect es más fuerte y domina PC1. Esta situación es común en ómicas y datos biomédicos.
+
+# 23. Flujo recomendado para aplicar PCA
+
+## Paso 1: Preparación
+
+- Eliminar variables irrelevantes.
+- Manejar valores faltantes.
+- Transformar variables asimétricas si es necesario.
+- Escalar variables numéricas.
+- Decidir qué hacer con variables categóricas.
+
+## Paso 2: PCA exploratorio
+
+- Scree plot.
+- Varianza acumulada.
+- Scores PC1-PC2.
+- Loadings.
+- Biplot.
+
+## Paso 3: Interpretación
+
+- Correlacionar PCs con metadata.
+- Revisar variables con mayores loadings.
+- Detectar batch effects.
+- Detectar outliers.
+
+## Paso 4: Modelamiento
+
+- Comparar modelos con y sin PCA.
+- Usar validación cruzada.
+- Evitar data leakage.
+- Evaluar en test set.
+
+## Paso 5: Comunicación
+
+- Nombrar componentes si es razonable.
+- Reportar varianza explicada.
+- Mostrar loadings principales.
+- Evitar sobreinterpretación.
+
+# 24. Otros datasets recomendados para practicar PCA en R
+
+## Regresión
+
+### Ames Housing
+
+Paquete: `AmesHousing`  
+Uso: precios de casas, variables mixtas, regresión, FAMD.
+
+### Boston Housing
+
+Paquete: `MASS`  
+Uso: regresión, colinealidad, variables socioeconómicas.
+
+```{r boston-example, eval=FALSE}
+data(Boston, package = "MASS")
+```
+
+### Hitters
+
+Paquete: `ISLR2`  
+Uso: predicción de salario, muchas variables deportivas.
+
+```{r hitters-example, eval=FALSE}
+data(Hitters, package = "ISLR2")
+```
+
+## Clasificación
+
+### iris
+
+Incluido en R.  
+Uso: PCA visual, clasificación multiclase.
+
+### BreastCancer
+
+Paquete: `mlbench`  
+Uso: PCA + logística.
+
+### Default
+
+Paquete: `ISLR2`  
+Uso: predicción de default financiero.
+
+```{r default-example, eval=FALSE}
+data(Default, package = "ISLR2")
+```
+
+## Bioinformática y ómicas
+
+PCA es muy útil en:
+
+- RNA-seq.
+- scRNA-seq.
+- Metagenómica.
+- Metilación.
+- Genotipos.
+- Variantes estructurales.
+- Embeddings de imágenes histopatológicas.
+
+En estos contextos, PCA ayuda a detectar:
+
+- Estructura poblacional.
+- Batch effects.
+- Subtipos moleculares.
+- Muestras atípicas.
+- Gradientes técnicos.
+
+# 25. Ejercicios propuestos
+
+## Ejercicio 1: PCA explicativo en Ames
+
+1. Ejecuta PCA con variables numéricas.
+2. Interpreta PC1, PC2 y PC3.
+3. Usa loadings y correlaciones con metadata.
+4. Propón un nombre para cada componente.
+
+## Ejercicio 2: PCA predictivo
+
+1. Ajusta regresión lineal con variables originales.
+2. Ajusta PCA + regresión lineal.
+3. Ajusta Ridge.
+4. Compara RMSE, MAE y R².
+5. Discute qué modelo recomendarías y por qué.
+
+## Ejercicio 3: PCA y clasificación
+
+1. Usa BreastCancer.
+2. Visualiza PC1 vs PC2 coloreando por clase.
+3. Ajusta regresión logística con variables originales.
+4. Ajusta PCA + regresión logística.
+5. Compara accuracy y ROC-AUC.
+
+## Ejercicio 4: Variables mixtas
+
+1. Usa Ames con variables numéricas y categóricas.
+2. Aplica one-hot encoding + PCA.
+3. Aplica FAMD.
+4. Compara interpretabilidad de ambos enfoques.
+
+## Ejercicio 5: Batch effect
+
+1. Simula o usa un dataset real con metadata técnica.
+2. Calcula PCA.
+3. Correlaciona PCs con batch.
+4. Discute si el PCA refleja biología o técnica.
+
+# 26. Checklist práctico
+
+Antes de reportar un PCA, responde:
+
+1. ¿Qué variables incluí?
+2. ¿Escalé las variables?
+3. ¿Cómo manejé valores faltantes?
+4. ¿Cuánta varianza explican PC1 y PC2?
+5. ¿Cuántos PCs explican 80% o 90%?
+6. ¿Qué variables dominan PC1?
+7. ¿Qué variables dominan PC2?
+8. ¿Los PCs se correlacionan con la variable respuesta?
+9. ¿Los PCs se correlacionan con metadata técnica?
+10. ¿Hay outliers?
+11. ¿PCA mejora la predicción?
+12. ¿Comparé contra modelos sin PCA?
+13. ¿Estoy evitando data leakage?
+14. ¿La interpretación biológica u operacional es razonable?
+
+# 27. Conclusión
+
+PCA es una herramienta fundamental en minería de datos porque conecta:
+
+- Exploración.
+- Visualización.
+- Reducción de dimensionalidad.
+- Interpretación.
+- Modelamiento predictivo.
+- Control de calidad.
+- Detección de outliers.
+
+Pero PCA debe usarse críticamente.
+
+No basta con graficar PC1 y PC2. Un buen análisis debe revisar:
+
+- Varianza explicada.
+- Loadings.
+- Correlación con metadata.
+- Outliers.
+- Batch effects.
+- Desempeño predictivo con y sin PCA.
+
+PCA es especialmente potente cuando se integra en un flujo reproducible y se combina con validación cruzada, modelos predictivos e interpretación basada en metadata.
+
+# Información de sesión
+
+```{r session-info}
+sessionInfo()
+```
