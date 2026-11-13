@@ -1,0 +1,602 @@
+---
+title: "Taller 2 — Usar e interpretar PCA en datos ómicos"
+subtitle: "Unidad 3 · Exploración, calidad de muestras y perfiles clínicos"
+author: "Alex Di Genova"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: show
+    df_print: paged
+params:
+  mostrar_soluciones: true
+  n_pcs: 5
+---
+
+# Caso y objetivo
+
+Recibimos expresión de **600 genes en 150 pacientes**, junto con lote de
+procesamiento, edad, sexo y respuesta clínica. Queremos reconocer las principales
+diferencias entre muestras, investigar su origen y describir grupos de pacientes.
+
+Los datos son **simulados**, ya transformados a una escala continua comparable.
+No representan pacientes reales ni son conteos crudos de RNA-seq. La generación de
+datos está disponible en `scripts/generar_datos_clase2.R`; para realizar las
+actividades basta con cargar los archivos entregados.
+
+Trabajaremos con PCA como herramienta **no supervisada**: no incluimos la respuesta
+clínica al calcular los componentes. Después usaremos la metadata para interpretar
+lo que aparece. Un análisis supervisado, en cambio, usaría una respuesta conocida
+para aprender a predecirla en nuevos pacientes.
+
+**Al finalizar podrán:** ejecutar PCA, leer sus gráficos, comparar ejes,
+interpretar loadings, investigar lote y outliers, y justificar una agrupación
+sin confundirla con un diagnóstico.
+
+## Preparación
+
+Ejecuten los bloques en orden. Requiere R ≥ 4.1. Si falta un paquete, instálenlo
+con la instrucción indicada en el error. Para ocultar las orientaciones finales:
+`rmarkdown::render("taller_clase2.Rmd", params = list(mostrar_soluciones = FALSE))`.
+
+```{r setup}
+paquetes <- c("rmarkdown", "knitr", "ggplot2", "dplyr", "tidyr", "broom", "cluster")
+faltantes <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly = TRUE)]
+if (length(faltantes)) {
+  stop("Instale primero: install.packages(c(",
+       paste(sprintf('"%s"', faltantes), collapse = ", "), "))")
+}
+stopifnot(getRversion() >= "4.1.0")
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(broom)
+knitr::opts_chunk$set(
+  echo = TRUE, warning = TRUE, message = FALSE, error = FALSE,
+  fig.path = "figuras/clase2-", fig.width = 7.4, fig.height = 4.6,
+  dpi = 170, out.width = "95%", cache = FALSE
+)
+theme_set(theme_minimal(base_size = 13) +
+  theme(plot.title = element_text(face = "bold", colour = "#17324D"),
+        panel.grid.minor = element_blank(), legend.position = "bottom"))
+paleta <- c("#2A7F7B", "#D95F59", "#D58B31", "#506273")
+stopifnot(length(params$n_pcs) == 1, is.finite(params$n_pcs),
+          params$n_pcs >= 2, params$n_pcs <= 10,
+          params$n_pcs == as.integer(params$n_pcs))
+```
+
+# Actividad 1 — Cargar y reconocer los datos
+
+Cada fila de expresión corresponde a una muestra. La primera columna es el ID;
+las restantes son genes. En otros archivos ómicos puede aparecer la orientación
+inversa: genes en filas. Comprueben siempre qué espera la función de PCA.
+
+```{r cargar-datos}
+archivos <- c("datos/clase2_expresion.csv", "datos/clase2_metadata.csv",
+              "datos/clase2_subtipos_simulados.csv")
+if (!all(file.exists(archivos))) {
+  stop("Faltan datos. Desde la carpeta class ejecute: ",
+       "Rscript scripts/generar_datos_clase2.R")
+}
+expresion <- read.csv(archivos[1], row.names = 1, check.names = FALSE)
+expr <- as.matrix(expresion)
+metadata <- read.csv(archivos[2], stringsAsFactors = FALSE) |>
+  mutate(lote = factor(lote), sexo = factor(sexo),
+         respuesta = factor(respuesta, levels = c("No", "Sí")))
+dim(expr)
+head(metadata)
+```
+
+| Campo | Interpretación | Uso |
+|:--|:--|:--|
+| ID | Identificador de muestra | Unir archivos |
+| GEN0001…GEN0600 | Expresión transformada | Entrada del PCA |
+| lote | L1 / L2 | Revisar diferencias técnicas |
+| edad, sexo | Metadata de pacientes | Describir perfiles |
+| respuesta | No / Sí | Interpretar después del PCA |
+| Archivo de subtipos | Verdad de simulación | Auditoría al final |
+
+```{r control-calidad}
+stopifnot(!anyDuplicated(metadata$id), !anyDuplicated(rownames(expr)),
+          setequal(metadata$id, rownames(expr)), is.numeric(expr),
+          all(is.finite(expr)))
+# Alinear los archivos por ID, no por el orden en que fueron guardados.
+metadata <- metadata[match(rownames(expr), metadata$id), ]
+stopifnot(identical(metadata$id, rownames(expr)))
+qc <- metadata |>
+  mutate(media = rowMeans(expr), sd = apply(expr, 1, sd),
+         prop_extremos = rowMeans(abs(expr) > 3))
+qc |> arrange(desc(prop_extremos)) |> head(6)
+table(metadata$lote)
+```
+
+**Registren:** número de pacientes y genes, significado de cada fila y dos
+comprobaciones de calidad. Si hay faltantes o IDs discordantes, investiguen su
+origen antes de continuar; el código se detiene para evitar decisiones implícitas.
+
+
+# Actividad 1
+
+plot por patience simple
+
+```{r sp}
+#
+expresion %>% select(GEN0001, GEN0600) %>% ggplot(aes(x=GEN0001,y=GEN0600)) + geom_point() + geom_smooth(method="lm") + theme_minimal()
+
+# determinar sd,var, mean, median etc por gen en el dataset
+var.pg=apply(t(expresion),1, var, na.rm=TRUE)
+
+
+hist(var.pg,nclass=50)
+
+```
+
+
+
+# Actividad 2 — Ejecutar PCA y leer la varianza explicada
+
+Eliminamos genes constantes y ejecutamos PCA. **Centrar** permite comparar cambios
+respecto del promedio de cada gen; **escalar** pone esos cambios en unidades
+comparables. Con otras plataformas esta elección debe revisarse.
+
+```{r ajustar-pca}
+# eliminando genes por varianza baja
+var_gen <- apply(expr, 2, var)
+expr_f <- expr[, is.finite(var_gen) & var_gen > 0.1]
+# prcomp ejecuta PCA
+pca <- prcomp(expr_f, center = TRUE, scale. = TRUE)
+# coordenadas de las muestras en el PC
+#pca$x
+# coefeciences o loadings de los genes en el PC
+#pca$rotation
+
+var_exp <- 100 * pca$sdev^2 / sum(pca$sdev^2)
+resumen_pcs <- tibble(
+  PC = seq_along(var_exp), porcentaje = var_exp,
+  acumulado = cumsum(var_exp)
+)
+head(resumen_pcs, 10)
+
+
+
+
+```
+
+```{r scree, fig.cap="Individual: porcentaje de cada eje. Acumulada: porcentaje de los ejes reunidos."}
+resumen_pcs |> slice_head(n = 15) |>
+  pivot_longer(c(porcentaje, acumulado), names_to = "medida", values_to = "valor") |>
+  ggplot(aes(PC, valor, colour = medida)) +
+  geom_line() + geom_point() + facet_wrap(~medida, scales = "free_y") +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "¿Cuánta variación estamos mirando?", y = "Varianza (%)") +
+  guides(colour = "none")
+```
+
+**Respondan mirando la tabla:** ¿qué porcentaje explica PC1? ¿Cuánto muestran juntos
+PC1 y PC2? ¿Qué información podría quedar fuera de ese gráfico?
+
+```{r solucion-varianza, echo=FALSE, results='asis', eval=params$mostrar_soluciones}
+cat(sprintf("**Orientación.** PC1 explica %.1f%%; PC1–PC2 juntos, %.1f%%.
+El resto queda fuera de esa proyección. Estos porcentajes describen la variación
+de la expresión, no la precisión para predecir respuesta clínica.\n",
+            var_exp[1], sum(var_exp[1:2])))
+```
+
+# Actividad 3 — Leer muestras y cambiar el color de la metadata
+
+Los **scores** son las coordenadas de los pacientes. Un punto representa una
+muestra; muestras cercanas tienen perfiles similares en los componentes mostrados.
+
+```{r scores}
+scores <- as_tibble(pca$x[, 1:10, drop = FALSE], rownames = "id") |>
+  left_join(metadata, by = "id")
+head(scores[, c("id", "PC1", "PC2", "lote", "respuesta")])
+```
+
+```{r pca-scores, fig.cap="Los componentes se calcularon sin usar lote ni respuesta clínica como etiquetas."}
+ggplot(scores, aes(PC1, PC2, colour = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Expresión: PCA coloreado por lote",
+       x = sprintf("PC1 (%.1f%%)", var_exp[1]),
+       y = sprintf("PC2 (%.1f%%)", var_exp[2]))
+```
+
+```{r pca-metadata, fig.cap="Las posiciones no cambian al colorear por respuesta; sólo cambia la información superpuesta."}
+ggplot(scores, aes(PC1, PC2, colour = respuesta, shape = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Las mismas muestras: respuesta clínica y lote",
+       x = sprintf("PC1 (%.1f%%)", var_exp[1]),
+       y = sprintf("PC2 (%.1f%%)", var_exp[2]))
+
+#PC2 vs PC3
+
+ggplot(scores, aes(PC3, PC2, colour = respuesta, shape = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Las mismas muestras: respuesta clínica y lote",
+       x = sprintf("PC3 (%.1f%%)", var_exp[3]),
+       y = sprintf("PC2 (%.1f%%)", var_exp[2]))
+
+
+ggplot(scores, aes(PC3, PC4, colour = respuesta, shape = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Las mismas muestras: respuesta clínica y lote",
+       x = sprintf("PC3 (%.1f%%)", var_exp[3]),
+       y = sprintf("PC4 (%.1f%%)", var_exp[4]))
+
+```
+
+**Modifiquen:** reemplacen `colour = respuesta` por `colour = edad` y retiren
+`scale_colour_manual()` porque edad es continua. Luego hagan un gráfico PC2–PC3,
+actualizando los porcentajes de los ejes.
+
+```{r pca-otros-ejes, fig.cap="Mirar otro par de componentes puede revelar estructura adicional."}
+ggplot(scores, aes(PC2, PC3, colour = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Más allá de PC1–PC2",
+       x = sprintf("PC2 (%.1f%%)", var_exp[2]),
+       y = sprintf("PC3 (%.1f%%)", var_exp[3]))
+```
+
+**Escriban dos observaciones y una limitación:** describan por separado lo que
+ocurre al colorear por lote y por respuesta. Colorear por una etiqueta no hace que
+PCA haya sido entrenado para reconocerla.
+
+# Actividad 4 — Investigar una muestra atípica
+
+No todas las muestras aisladas son errores. Crucen las métricas de calidad con
+la posición en varios componentes.
+
+```{r outliers, fig.cap="La etiqueta señala la muestra con mayor proporción de valores extremos en el QC."}
+id_revisar <- qc$id[which.max(qc$prop_extremos)]
+qc |> filter(id == id_revisar)
+ggplot(scores, aes(PC2, PC3, colour = lote)) +
+  geom_point(size = 2.4, alpha = .75) +
+  geom_text(data = filter(scores, id == id_revisar),
+            aes(label = id), nudge_y = 1, show.legend = FALSE) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = paste("Revisión de calidad:", id_revisar),
+       x = sprintf("PC2 (%.1f%%)", var_exp[2]),
+       y = sprintf("PC3 (%.1f%%)", var_exp[3]))
+```
+
+**Decidan:** ¿qué revisarían en el laboratorio o en los archivos originales?
+Propongan una razón técnica y una explicación biológica posible. Mantendremos la
+muestra en el análisis principal y compararemos el resultado al excluirla.
+
+```{r solucion-qc, echo=FALSE, results='asis', eval=params$mostrar_soluciones}
+cat("**Orientación.** Revisar identidad, profundidad, preparación y trazabilidad.
+Una muestra rara puede ser biológicamente válida. En esta simulación P007 contiene
+un artefacto, pero en un estudio real haría falta evidencia técnica adicional.\n")
+```
+
+# Actividad 5 — Reconocer lote y comparar antes/después
+
+Un lote puede reflejar diferencias de día, placa, operador o kit. Como en Clase 1,
+un modelo múltiple ayuda a interpretar una asociación ajustando por otras variables.
+
+```{r pc-modelo-multiple}
+modelo_pc1 <- lm(PC1 ~ lote + edad + sexo, data = scores)
+
+modelo_pc2 <- lm(PC2 ~ lote + edad + sexo, data = scores)
+
+tidy(modelo_pc1, conf.int = TRUE)
+```
+
+**Interpreten:** dirección de la asociación lote–PC1 e intervalo de confianza.
+El coeficiente está en unidades del componente, no en unidades de expresión de un
+gen. Usamos el modelo para describir el eje; no diagnostica por sí solo su origen.
+
+## Comparación con una matriz ajustada
+
+La siguiente función aplica por gen un modelo con lote, edad y sexo y resta
+sólo la contribución del lote. Está provista para ejecutar la comparación;
+concentren la interpretación en los gráficos. La respuesta clínica y el subtipo
+no entran en la corrección.
+
+```{r corregir-lote}
+ajustar_lote <- function(X, meta) {
+  stopifnot(identical(rownames(X), meta$id))
+  corregida <- vapply(seq_len(ncol(X)), function(j) {
+    datos_gen <- meta
+    datos_gen$expresion <- X[, j]
+    modelo <- lm(expresion ~ lote, data = datos_gen)
+    if (anyNA(coef(modelo))) stop("Diseño no identificable: revisar confusión.")
+    efecto_lote <- predict(modelo, type = "terms")[, "lote"]
+    X[, j] - efecto_lote
+  }, numeric(nrow(X)))
+  dimnames(corregida) <- dimnames(X)
+  corregida
+}
+expr_cor <- ajustar_lote(expr_f, metadata)
+pca_cor <- prcomp(expr_cor, center = TRUE, scale. = TRUE)
+ve_cor <- 100 * pca_cor$sdev^2 / sum(pca_cor$sdev^2)
+scores_cor <- as_tibble(pca_cor$x[, 1:10, drop = FALSE], rownames = "id") |>
+  left_join(metadata, by = "id")
+```
+
+```{r pca-corregido, fig.cap="Cada panel muestra un PCA recalculado; sus componentes y porcentajes son distintos."}
+comparacion <- bind_rows(
+  mutate(scores, etapa = sprintf("Antes: PC1 %.1f%% / PC2 %.1f%%", var_exp[1], var_exp[2])),
+  mutate(scores_cor, etapa = sprintf("Después: PC1 %.1f%% / PC2 %.1f%%", ve_cor[1], ve_cor[2]))
+)
+ggplot(comparacion, aes(PC1, PC2, colour = lote)) +
+  geom_point(size = 2, alpha = .8) +
+  facet_wrap(~etapa, scales = "free") +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Comparar estructura antes y después de ajustar lote")
+```
+
+**Respondan:** ¿se mezclan más los lotes? ¿Persisten otros grupos? ¿Qué no podemos
+concluir sólo porque los lotes se mezclen?
+
+```{r solucion-lote, echo=FALSE, results='asis', eval=params$mostrar_soluciones}
+cat("**Orientación.** Menor separación por lote es compatible con el efecto del
+ajuste en estas muestras. No demuestra que toda la señal restante sea biológica.
+Si lote y diagnóstico están confundidos, la corrección puede eliminar biología.
+Aquí el diseño simulado balancea los subtipos entre lotes.\n")
+```
+
+# Actividad 6 — Interpretar los genes asociados a un componente
+
+Los **loadings** son los pesos de los genes en un eje. Revisen los de mayor
+magnitud y su patrón conjunto. Un loading no es un p-valor, un cambio de expresión
+entre tratamientos ni una prueba de causalidad.
+
+```{r loadings}
+pc_interes <- "PC1" # Cambiar por PC2 para comparar otro eje.
+loadings <- tibble(
+  gen = rownames(pca_cor$rotation),
+  carga = pca_cor$rotation[, pc_interes]
+) |> arrange(desc(abs(carga)))
+head(loadings, 12)
+```
+
+```{r loadings-figura, fig.cap="Genes con mayor carga absoluta en el componente seleccionado, después del ajuste."}
+head(loadings, 12) |>
+  ggplot(aes(carga, reorder(gen, carga))) +
+  geom_col(fill = paleta[1]) +
+  labs(title = paste("Genes que ayudan a interpretar", pc_interes),
+       x = "Loading", y = NULL)
+```
+
+**Registren:** tres genes destacados, si sus cargas apuntan al mismo lado del eje
+y qué anotaciones buscarían para interpretar ese conjunto. En un estudio real
+consultaríamos funciones y vías biológicas; los IDs GEN de estos datos son
+ficticios y no deben buscarse como genes reales.
+
+```{r solucion-loadings, echo=FALSE, results='asis', eval=params$mostrar_soluciones}
+cat("**Orientación.** Genes con cargas del mismo signo contribuyen hacia el mismo
+lado del componente. Invertir todos los signos de un eje no cambia el PCA.
+Un grupo de genes anotado en un proceso común puede orientar una hipótesis, pero
+requiere análisis específico y validación.\n")
+```
+
+# Actividad 7 — Agrupar muestras y evaluar la separación
+
+PCA proporciona coordenadas; para asignar grupos utilizaremos k-means y clustering
+jerárquico. Usamos los primeros `r params$n_pcs` componentes, sin escalar de nuevo
+sus scores. El número de componentes y el número de grupos **son decisiones distintas**.
+
+```{r evaluar-k}
+q <- as.integer(params$n_pcs)
+Xcl <- pca_cor$x[, seq_len(q), drop = FALSE]
+d <- dist(Xcl)
+ks <- 2:7
+ajustes_k <- lapply(ks, function(k) {
+  set.seed(3300 + k)
+  kmeans(Xcl, centers = k, nstart = 50, iter.max = 100)
+})
+eval_k <- bind_rows(lapply(seq_along(ks), function(j) {
+  fit <- ajustes_k[[j]]
+  tibble(k = ks[j], WSS = fit$tot.withinss,
+         silhouette = mean(cluster::silhouette(fit$cluster, d)[, "sil_width"]),
+         menor_cluster = min(fit$size))
+}))
+eval_k
+```
+
+```{r curvas-k, fig.cap="Codo, separación promedio y tamaños de grupo deben leerse juntos."}
+eval_k |> select(k, WSS, silhouette) |>
+  pivot_longer(-k, names_to = "criterio", values_to = "valor") |>
+  ggplot(aes(k, valor)) +
+  geom_line(colour = paleta[1]) + geom_point(size = 2.5, colour = paleta[1]) +
+  facet_wrap(~criterio, scales = "free_y") + scale_x_continuous(breaks = ks) +
+  labs(title = "Comparar números de grupos", y = NULL)
+```
+
+Silhouette alto indica mejor separación en esta representación; valores próximos
+a cero indican muestras ambiguas. El codo muestra cuándo la mejora se atenúa.
+
+**Antes de continuar:** elijan un k y justifíquenlo usando silhouette, tamaños y
+gráfico del codo. No consulten aún el archivo de subtipos. El código siguiente
+ofrece una regla didáctica reproducible, que pueden contrastar con su elección.
+
+```{r elegir-k}
+candidatos <- filter(eval_k, menor_cluster >= 5)
+if (nrow(candidatos) == 0) stop("Ninguna partición cumple el tamaño mínimo.")
+k_elegido <- candidatos$k[which.max(candidatos$silhouette)]
+km <- ajustes_k[[match(k_elegido, ks)]]
+asignacion <- tibble(id = rownames(Xcl), cluster = factor(km$cluster))
+resultado <- left_join(scores_cor, asignacion, by = "id")
+table(resultado$cluster)
+```
+
+La regla elige **k = `r k_elegido`**: máximo silhouette entre las opciones con al
+menos cinco muestras por grupo. No prueba que existan grupos discretos, y este
+mínimo es una decisión didáctica, no una regla universal.
+
+```{r clusters-pca, fig.cap="El color representa grupos asignados por k-means; el PCA por sí solo no asignó estas etiquetas."}
+ggplot(resultado, aes(PC1, PC2, colour = cluster, shape = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  labs(title = paste("k-means con", k_elegido, "clusters"),
+       x = sprintf("PC1 (%.1f%%)", ve_cor[1]),
+       y = sprintf("PC2 (%.1f%%)", ve_cor[2]))
+```
+
+```{r silhouette, fig.cap="Muestras con silhouette pequeño o negativo requieren revisar su asignación."}
+sil <- cluster::silhouette(km$cluster, d)
+plot(sil, col = seq_len(k_elegido) + 1, border = NA,
+     main = "Separación de las muestras")
+```
+
+```{r jerarquico, fig.cap="Dendrograma de Ward sobre las mismas coordenadas usadas en k-means."}
+hc <- hclust(d, method = "ward.D2")
+plot(hc, labels = FALSE, hang = -1, main = "Clustering jerárquico",
+     xlab = "Muestras", sub = "")
+rect.hclust(hc, k = k_elegido, border = seq_len(k_elegido) + 1)
+table(Ward = cutree(hc, k_elegido), Kmeans = km$cluster)
+```
+
+**Interpreten la tabla:** ¿los dos métodos agrupan a los mismos pacientes, aunque
+los números de los clusters cambien?
+
+# Actividad 8 — Conectar perfiles con metadata y candidatos
+
+Después de fijar el análisis, podemos contrastarlo con metadata y con el subtipo
+que se utilizó para simular. Este último sirve de auditoría; no debe elegirse k
+buscando forzar su recuperación.
+
+```{r metadata-clusters}
+verdad <- read.csv(archivos[3], stringsAsFactors = FALSE)
+stopifnot(!anyDuplicated(verdad$id), setequal(verdad$id, resultado$id))
+auditoria <- left_join(resultado, verdad, by = "id")
+table(Cluster = auditoria$cluster, Subtipo = auditoria$subtipo)
+table(Cluster = resultado$cluster, Lote = resultado$lote)
+resultado |>
+  group_by(cluster) |>
+  summarise(n = n(), edad_media = mean(edad),
+            proporcion_respuesta = mean(respuesta == "Sí"), .groups = "drop")
+```
+
+```{r respuesta-cluster, fig.cap="Las proporciones describen asociaciones; no son la precisión de un clasificador."}
+ggplot(resultado, aes(cluster, fill = respuesta)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = paleta[1:2]) +
+  labs(title = "Respuesta clínica por cluster", x = "Cluster", y = "Proporción")
+```
+
+## Genes que caracterizan un grupo
+
+Compararemos descriptivamente un grupo con el resto. Estos genes participaron
+en construir los clusters: no usaremos p-valores ni FDR como confirmación de esas
+diferencias seleccionadas.
+
+```{r biomarcadores}
+cluster_obj <- names(which.max(table(resultado$cluster)))
+meta_genes <- resultado[match(rownames(expr_cor), resultado$id), ]
+stopifnot(identical(meta_genes$id, rownames(expr_cor)))
+en_obj <- meta_genes$cluster == cluster_obj
+diferencia <- colMeans(expr_cor[en_obj, , drop = FALSE]) -
+  colMeans(expr_cor[!en_obj, , drop = FALSE])
+marcadores <- tibble(
+  gen = colnames(expr_cor),
+  diferencia = as.numeric(diferencia),
+  diferencia_en_DE = as.numeric(diferencia / apply(expr_cor, 2, sd))
+) |> arrange(desc(abs(diferencia_en_DE)))
+head(marcadores, 12)
+```
+
+```{r marcadores-figura, fig.cap="Ranking descriptivo de candidatos: diferencia dividida por la DE total del gen."}
+head(marcadores, 12) |>
+  ggplot(aes(diferencia_en_DE, reorder(gen, diferencia_en_DE))) +
+  geom_col(fill = paleta[1]) +
+  labs(title = paste("Genes que caracterizan el cluster", cluster_obj),
+       x = "Diferencia / DE total", y = NULL)
+```
+
+**Redacten:** un hallazgo sobre respuesta, uno sobre lote y tres candidatos que
+seguirían estudiando. Expliquen qué datos nuevos harían falta para hablar de
+biomarcadores clínicamente útiles.
+
+# Actividad 9 — Comprobar si la interpretación se mantiene
+
+## Otra elección de escalamiento
+
+```{r sensibilidad-escalamiento, fig.cap="El gráfico debe interpretarse junto con la elección de preprocesamiento."}
+pca_sin_escalar <- prcomp(expr_cor, center = TRUE, scale. = FALSE)
+ve_sin <- 100 * pca_sin_escalar$sdev^2 / sum(pca_sin_escalar$sdev^2)
+scores_sin <- as_tibble(pca_sin_escalar$x[, 1:2], rownames = "id") |>
+  left_join(metadata, by = "id")
+ggplot(scores_sin, aes(PC1, PC2, colour = lote)) +
+  geom_point(size = 2.5, alpha = .8) +
+  scale_colour_manual(values = paleta[1:2]) +
+  labs(title = "Sensibilidad: PCA centrado, sin escalar genes",
+       x = sprintf("PC1 (%.1f%%)", ve_sin[1]),
+       y = sprintf("PC2 (%.1f%%)", ve_sin[2]))
+```
+
+**Comparen** con el PCA ajustado y escalado. En esta matriz todas las mediciones
+tienen unidades comparables; en un panel con glucosa, peso y presión arterial,
+las diferencias de escala pueden tener mucha mayor influencia.
+
+## Repetir el análisis sin la muestra bajo revisión
+
+```{r sensibilidad-outlier, fig.cap="Sensibilidad a la muestra bajo revisión: se recalculan ajuste, PCA y agrupación."}
+mantener <- rownames(expr_f) != id_revisar
+expr_sens <- ajustar_lote(expr_f[mantener, , drop = FALSE], metadata[mantener, ])
+pca_sens <- prcomp(expr_sens, center = TRUE, scale. = TRUE)
+ve_sens <- 100 * pca_sens$sdev^2 / sum(pca_sens$sdev^2)
+set.seed(3401)
+km_sens <- kmeans(pca_sens$x[, seq_len(q), drop = FALSE],
+                  centers = k_elegido, nstart = 50, iter.max = 100)
+sensibilidad <- as_tibble(pca_sens$x[, 1:2], rownames = "id") |>
+  mutate(cluster_nuevo = factor(km_sens$cluster)) |>
+  left_join(asignacion, by = "id")
+table(Principal = sensibilidad$cluster, Sin_muestra = sensibilidad$cluster_nuevo)
+ggplot(sensibilidad, aes(PC1, PC2, colour = cluster)) +
+  geom_point(size = 2.5, alpha = .8) +
+  labs(title = paste("PCA sin", id_revisar),
+       subtitle = "Color: asignación del análisis principal",
+       x = sprintf("PC1 (%.1f%%)", ve_sens[1]),
+       y = sprintf("PC2 (%.1f%%)", ve_sens[2]))
+```
+
+Los ejes pueden cambiar de orientación o de orden entre análisis. Comparen
+relaciones entre pacientes y la tabla de asignaciones, no sólo izquierda/derecha.
+Aquí mantenemos k para comparar grupos: no evaluamos si la elección de k es estable.
+
+**Práctica adicional:** rendericen con `params = list(n_pcs = 3)` y comparen con
+cinco PCs. Registren si cambia k y si cambian las conclusiones clínicas.
+
+```{r solucion-sensibilidad, echo=FALSE, results='asis', eval=params$mostrar_soluciones}
+cat("**Orientación.** Si las mismas muestras continúan juntas, hay estabilidad
+frente a esa decisión concreta. La simulación tiene señal fuerte y puede ser muy
+estable; los datos reales no tienen por qué comportarse así. Una réplica externa
+sigue siendo necesaria para evaluar utilidad clínica.\n")
+```
+
+# Informe final
+
+Entreguen un informe breve con estos resultados:
+
+| Evidencia | Interpretación que debe acompañarla |
+|:--|:--|
+| Scree plot | Porcentaje mostrado y variación que queda fuera |
+| PCA por lote y respuesta | Dos observaciones, una explicación posible y una limitación |
+| PC2–PC3 y QC | Muestra a revisar y acción propuesta |
+| Antes/después del ajuste | Qué patrón cambia y qué no puede concluirse |
+| Loadings | Genes destacados y anotación biológica que buscarían |
+| Clusters y silhouette | k elegido, tamaños y muestras ambiguas |
+| Metadata y candidatos | Hallazgo descriptivo y plan de validación |
+| Sensibilidad | Qué conclusiones se mantienen al cambiar decisiones |
+
+Formato sugerido: **“Observamos ____. Podría relacionarse con ____.
+Lo comprobamos mediante ____. Estos datos no permiten concluir ____.”**
+
+Las funciones se documentan en
+[`prcomp`](https://stat.ethz.ch/R-manual/R-devel/library/stats/html/prcomp.html)
+y [silhouette](https://stat.ethz.ch/R-manual/R-devel/library/cluster/html/silhouette.html).
+Para RNA-seq real, consultar la [guía de DESeq2](https://bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html)
+sobre transformación y exploración de muestras; este ejercicio no sustituye el
+preprocesamiento específico de esa plataforma.
+
+```{r informacion-sesion}
+sessionInfo()
+```
