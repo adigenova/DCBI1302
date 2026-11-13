@@ -163,4 +163,13 @@ PCA I
 
 ### code
 
-[RmarkDown](https://github.com/adigenova/uohdm/blob/main/code/PCA_md_R.Rmd)
+[RmarkDown](https://github.com/adigenova/DCBI1302/blob/main/code/PCA_md_R.Rmd)
+
+## 13/11/2026
+
+Taller PCA
+
+### code
+
+[RmarkDown](https://github.com/adigenova//DCBI1302/clob/main/code/taller_clase2.Rmd)
+[html](https://github.com/adigenova//DCBI1302/clob/main/code/taller_clase2.html)
