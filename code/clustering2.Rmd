@@ -1,0 +1,922 @@
+---
+title: 'Clustering 2: Clustering aplicado, robustez e interpretación'
+author: "Minería de Datos"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  html_notebook:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# Objetivos de la clase
+
+En la primera clase revisamos los conceptos básicos de clustering, incluyendo k-means, clustering jerárquico, selección del número óptimo de clusters, PCA, pruebas estadísticas entre clusters y modelos para predecir la pertenencia a un cluster.
+
+En esta segunda clase profundizaremos en una idea central:
+
+> No basta con encontrar clusters: debemos evaluar si son robustos, interpretables y útiles.
+
+Al finalizar esta clase, deberías ser capaz de:
+
+1. Reconocer las limitaciones de k-means.
+2. Comparar k-means con métodos alternativos como PAM y DBSCAN.
+3. Entender cómo la elección de distancia afecta los clusters.
+4. Trabajar con variables mixtas usando distancia de Gower.
+5. Evaluar estabilidad de clusters mediante remuestreo.
+6. Interpretar y perfilar clusters usando estadística descriptiva y visualizaciones.
+7. Reflexionar críticamente sobre cuándo un cluster tiene valor analítico.
+
+# Preparación del ambiente
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+
+paquetes <- c(
+  "ggplot2", "dplyr", "tidyr", "cluster", "dbscan", "mclust", "purrr"
+)
+
+instalar <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(instalar) > 0) {
+  install.packages(instalar)
+}
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(cluster)
+library(dbscan)
+library(mclust)
+library(purrr)
+
+set.seed(123)
+```
+
+# 1. Recordatorio: ¿qué hace k-means?
+
+K-means busca dividir las observaciones en $k$ grupos minimizando la distancia de cada observación al centroide de su cluster.
+
+En términos simples:
+
+- Cada cluster tiene un centroide.
+- Cada observación se asigna al centroide más cercano.
+- El algoritmo actualiza los centroides hasta estabilizar la solución.
+
+Sin embargo, k-means tiene limitaciones importantes:
+
+- Requiere definir el número de clusters antes de ejecutar el algoritmo.
+- Es sensible a la escala de las variables.
+- Es sensible a outliers.
+- Funciona mejor con clusters aproximadamente esféricos.
+- Puede entregar resultados distintos según la semilla inicial.
+- No modela bien clusters de forma irregular.
+
+# 2. Datos simulados: cuando k-means funciona bien
+
+Primero generaremos datos simples con tres grupos aproximadamente separados.
+
+```{r datos-simples}
+set.seed(123)
+
+n <- 100
+
+datos_simples <- bind_rows(
+  data.frame(x = rnorm(n, mean = 0, sd = 0.5),
+             y = rnorm(n, mean = 0, sd = 0.5),
+             grupo_real = "A"),
+  data.frame(x = rnorm(n, mean = 3, sd = 0.5),
+             y = rnorm(n, mean = 3, sd = 0.5),
+             grupo_real = "B"),
+  data.frame(x = rnorm(n, mean = 0, sd = 0.5),
+             y = rnorm(n, mean = 4, sd = 0.5),
+             grupo_real = "C")
+)
+
+ggplot(datos_simples, aes(x, y, color = grupo_real)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "Datos simulados con tres grupos reales")
+```
+
+Aplicamos k-means con $k = 3$.
+
+```{r kmeans-simple}
+km_simple <- kmeans(datos_simples[, c("x", "y")], centers = 3, nstart = 25)
+
+datos_simples$cluster_kmeans <- factor(km_simple$cluster)
+
+ggplot(datos_simples, aes(x, y, color = cluster_kmeans)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "K-means con k = 3")
+
+ggplot(datos_simples, aes(x, y, color = grupo_real)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "Datos simulados con tres grupos reales")
+
+```
+
+En este caso, k-means funciona bien porque los clusters son relativamente compactos, separados y tienen forma aproximadamente circular.
+
+## Comparación con grupos reales
+
+Como en este ejemplo conocemos los grupos reales, podemos comparar la clasificación generada por k-means con la etiqueta original.
+
+```{r comparacion-grupo-real}
+table(
+  Grupo_real = datos_simples$grupo_real,
+  Cluster_kmeans = datos_simples$cluster_kmeans
+)
+
+adjustedRandIndex(datos_simples$grupo_real, datos_simples$cluster_kmeans)
+```
+
+El **Adjusted Rand Index**, o ARI, mide la similitud entre dos particiones de clusters.
+
+- ARI cercano a 1: las particiones son muy similares.
+- ARI cercano a 0: la similitud es similar a lo esperado por azar.
+- ARI negativo: peor que una agrupación aleatoria.
+
+# 3. Cuando k-means puede fallar
+
+Ahora simularemos dos clusters con forma de media luna. Este tipo de estructura no es bien capturada por k-means, porque k-means favorece grupos esféricos o compactos.
+
+```{r datos-moons}
+set.seed(123)
+
+n <- 200
+
+theta1 <- runif(n, 0, pi)
+x1 <- cos(theta1) + rnorm(n, 0, 0.08)
+y1 <- sin(theta1) + rnorm(n, 0, 0.08)
+
+theta2 <- runif(n, 0, pi)
+x2 <- 1 - cos(theta2) + rnorm(n, 0, 0.08)
+y2 <- 0.5 - sin(theta2) + rnorm(n, 0, 0.08)
+
+datos_moons <- data.frame(
+  x = c(x1, x2),
+  y = c(y1, y2),
+  grupo_real = factor(rep(c("Luna 1", "Luna 2"), each = n))
+)
+
+ggplot(datos_moons, aes(x, y, color = grupo_real)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "Datos simulados con clusters no esféricos")
+```
+
+Aplicamos k-means con $k = 2$.
+
+```{r kmeans-moons}
+km_moons <- kmeans(datos_moons[, c("x", "y")], centers = 2, nstart = 25)
+datos_moons$cluster_kmeans <- factor(km_moons$cluster)
+
+ggplot(datos_moons, aes(x, y, color = cluster_kmeans)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "K-means en clusters no esféricos")
+
+adjustedRandIndex(datos_moons$grupo_real, datos_moons$cluster_kmeans)
+```
+
+**Interpretación:**  
+K-means divide el espacio de manera más o menos lineal, por lo que puede fallar cuando los clusters tienen formas curvas, alargadas o irregulares.
+
+# 4. DBSCAN: clustering basado en densidad
+
+DBSCAN significa **Density-Based Spatial Clustering of Applications with Noise**. A diferencia de k-means, DBSCAN no necesita que definamos previamente el número de clusters.
+
+DBSCAN usa dos parámetros principales:
+
+- `eps`: radio de vecindad.
+- `minPts`: número mínimo de puntos dentro de ese radio para considerar una zona como densa.
+
+DBSCAN puede:
+
+- Detectar clusters de forma irregular.
+- Identificar puntos de ruido u outliers.
+- Encontrar clusters sin especificar directamente $k$.
+
+## Selección visual de eps
+
+Una forma práctica de explorar el parámetro `eps` es usar un gráfico de k-nearest neighbors.
+
+```{r kNNdistplot}
+kNNdistplot(datos_moons[, c("x", "y")], k = 5)
+#abline(h = 0.20, lty = 2)
+
+data(iris)
+iris <- as.matrix(iris[, 1:4])
+
+## Find the 4-NN distance for each observation (see ?kNN
+## for different search strategies)
+kNNdist(iris, k = 4)
+## elegir el punto silla
+kNNdistplot(iris, k = 4)
+abline(h = 0.80, lty = 2)
+
+db_iris <- dbscan(iris,eps = 0.8, minPts = 5)
+
+```
+
+Buscamos un punto de inflexión en la curva. En este ejemplo probaremos con `eps = 0.20` y `minPts = 5`.
+
+```{r dbscan-moons}
+db_moons <- dbscan(datos_moons[, c("x", "y")],eps = 0.2, minPts = 5)
+
+datos_moons$cluster_dbscan <- factor(db_moons$cluster)
+
+ggplot(datos_moons, aes(x, y, color = cluster_dbscan)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(
+    title = "DBSCAN en datos con clusters no esféricos",
+    subtitle = "El cluster 0 corresponde a puntos clasificados como ruido"
+  )
+
+adjustedRandIndex(datos_moons$grupo_real, datos_moons$cluster_dbscan)
+```
+
+## Discusión
+
+DBSCAN puede ser mejor que k-means cuando los clusters tienen formas complejas. Sin embargo, también tiene limitaciones:
+
+- Es sensible a la elección de `eps`.
+- Puede fallar si los clusters tienen densidades muy distintas.
+- En datos de alta dimensión, la noción de densidad puede volverse menos clara.
+
+# 5. PAM o k-medoids: una alternativa más robusta a k-means
+
+PAM significa **Partitioning Around Medoids**. Es parecido a k-means, pero usa **medoides** en lugar de centroides.
+
+Un centroide puede ser un punto promedio que no existe en los datos. En cambio, un medoide es una observación real del dataset.
+
+Ventajas de PAM:
+
+- Más robusto frente a outliers.
+- Permite trabajar con distintas matrices de distancia.
+- Es útil cuando queremos que el centro de cada cluster sea una observación real.
+
+# 6. Efecto de outliers: k-means vs PAM
+
+Generaremos datos con tres clusters y algunos outliers.
+
+```{r datos-outliers}
+set.seed(123)
+
+datos_outliers <- bind_rows(
+  data.frame(x = rnorm(80, 0, 0.4), y = rnorm(80, 0, 0.4)),
+  data.frame(x = rnorm(80, 3, 0.4), y = rnorm(80, 3, 0.4)),
+  data.frame(x = rnorm(80, 0, 0.4), y = rnorm(80, 4, 0.4)),
+  data.frame(x = c(7, 8, 100), y = c(0, 6, -2))
+)
+
+ggplot(datos_outliers, aes(x, y)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "Datos con outliers")
+```
+
+Aplicamos k-means y PAM con $k = 3$.
+
+```{r kmeans-pam-outliers}
+km_out <- kmeans(datos_outliers, centers = 3, nstart = 25)
+pam_out <- pam(datos_outliers, k = 3)
+
+datos_outliers$cluster_kmeans <- factor(km_out$cluster)
+datos_outliers$cluster_pam <- factor(pam_out$clustering)
+
+p1 <- ggplot(datos_outliers, aes(x, y, color = cluster_kmeans)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "K-means")
+
+p2 <- ggplot(datos_outliers, aes(x, y, color = cluster_pam)) +
+  geom_point(size = 2, alpha = 0.8) +
+  theme_minimal() +
+  labs(title = "PAM / k-medoids")
+
+p1
+p2
+```
+
+**Discusión:**  
+Los outliers pueden afectar la posición de los centroides de k-means. PAM suele ser más robusto porque representa cada cluster mediante una observación real.
+
+# 7. La importancia de escalar las variables
+
+Cuando las variables están en escalas muy distintas, aquellas con valores más grandes pueden dominar la distancia Euclidiana.
+
+Usaremos `mtcars` como ejemplo.
+
+```{r mtcars-escalamiento}
+datos_mtcars <- mtcars %>%
+  select(mpg, disp, hp, wt)
+
+summary(datos_mtcars)
+```
+
+Aplicamos k-means sin escalar y luego con variables estandarizadas.
+
+```{r kmeans-sin-y-con-scale}
+set.seed(123)
+
+km_sin_scale <- kmeans(datos_mtcars, centers = 3, nstart = 25)
+km_con_scale <- kmeans(scale(datos_mtcars), centers = 3, nstart = 25)
+
+resultado_scale <- data.frame(
+  auto = rownames(mtcars),
+  cluster_sin_escalar = factor(km_sin_scale$cluster),
+  cluster_escalado = factor(km_con_scale$cluster)
+)
+
+head(resultado_scale, 10)
+
+table(
+  Sin_escalar = resultado_scale$cluster_sin_escalar,
+  Escalado = resultado_scale$cluster_escalado
+)
+
+adjustedRandIndex(resultado_scale$cluster_sin_escalar, resultado_scale$cluster_escalado)
+
+```
+
+```{r pca-scale-comparison}
+pca_mtcars <- prcomp(datos_mtcars, center = TRUE, scale. = TRUE)
+
+pca_df <- data.frame(
+  PC1 = pca_mtcars$x[, 1],
+  PC2 = pca_mtcars$x[, 2],
+  cluster_sin_escalar = factor(km_sin_scale$cluster),
+  cluster_escalado = factor(km_con_scale$cluster)
+)
+
+ggplot(pca_df, aes(PC1, PC2, color = cluster_sin_escalar)) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(title = "Clusters obtenidos sin escalar variables")
+
+ggplot(pca_df, aes(PC1, PC2, color = cluster_escalado)) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(title = "Clusters obtenidos después de escalar variables")
+```
+
+**Pregunta de discusión:**  
+¿Por qué `disp` o `hp` podrían dominar la distancia si no escalamos las variables?
+
+# 8. Distancias: el clustering depende de cómo medimos similitud
+
+Una idea avanzada pero fundamental es que los clusters no existen de manera aislada del método. Los clusters dependen de:
+
+- Variables seleccionadas (subset de variables o variables transformadas desde PCA u otro metodo).
+- Transformaciones aplicadas (scale, center, log... etc).
+- Escalamiento.
+- Métrica de distancia (euclidean, manhattan, ward, jaccard, etc).
+- Algoritmo usado (k-means, pam, dbscan, etc).
+
+Compararemos clustering jerárquico usando distancia Euclidiana y Manhattan.
+
+```{r distancias-comparacion}
+datos_scaled <- scale(datos_mtcars)
+
+dist_euclidiana <- dist(datos_scaled, method = "euclidean")
+dist_manhattan <- dist(datos_scaled, method = "manhattan")
+
+hc_euclidiana <- hclust(dist_euclidiana, method = "complete")
+hc_manhattan <- hclust(dist_manhattan, method = "complete")
+
+plot(hc_euclidiana, main = "Clustering jerárquico - distancia Euclidiana", xlab = "", sub = "")
+rect.hclust(hc_euclidiana, k = 3, border = 2:4)
+
+plot(hc_manhattan, main = "Clustering jerárquico - distancia Manhattan", xlab = "", sub = "")
+rect.hclust(hc_manhattan, k = 3, border = 2:4)
+```
+
+```{r comparacion-distancias}
+cluster_euclidiana <- cutree(hc_euclidiana, k = 3)
+cluster_manhattan <- cutree(hc_manhattan, k = 3)
+
+table(
+  Euclidiana = cluster_euclidiana,
+  Manhattan = cluster_manhattan
+)
+
+adjustedRandIndex(cluster_euclidiana, cluster_manhattan)
+```
+
+**Interpretación:**  
+Si el ARI entre ambas soluciones es bajo, significa que cambiar la distancia produjo clusters diferentes. Esto muestra que la elección de distancia es una decisión analítica importante.
+
+# 9. Clustering con variables mixtas: distancia de Gower
+
+En datos reales solemos tener variables numéricas, categóricas y binarias. K-means no es apropiado directamente para este tipo de datos.
+
+Una alternativa es usar **distancia de Gower**, que permite combinar distintos tipos de variables.
+
+
+Crearemos un dataset mixto a partir de `mtcars`.
+
+```{r datos-mixtos}
+datos_mixtos <- mtcars %>%
+  mutate(
+    auto = rownames(mtcars),
+    am = factor(am, labels = c("automatico", "manual")),
+    cyl = factor(cyl),
+    consumo = case_when(
+      mpg >= quantile(mpg, 0.67) ~ "alto",
+      mpg <= quantile(mpg, 0.33) ~ "bajo",
+      TRUE ~ "medio"
+    )
+  ) %>%
+  select(auto, mpg, hp, wt, cyl, am, consumo)
+
+datos_mixtos <- datos_mixtos %>% mutate(consumo=factor(consumo))
+
+head(datos_mixtos)
+```
+
+Calculamos distancia de Gower y aplicamos PAM.
+
+```{r gower-pam}
+dist_gower <- daisy(datos_mixtos %>% dplyr::select(-auto), metric = "gower")
+
+pam_gower <- pam(dist_gower, k = 3, diss = TRUE)
+
+datos_mixtos$cluster_gower <- factor(pam_gower$clustering)
+
+datos_mixtos %>%
+  arrange(cluster_gower) %>%
+  head(15)
+```
+
+Visualizamos los clusters usando PCA solo para las variables numéricas.
+
+```{r pca-gower}
+pca_mixtos <- prcomp(scale(datos_mixtos %>% select(mpg, hp, wt)), center = TRUE, scale. = TRUE)
+
+pca_mixtos_df <- data.frame(
+  auto = datos_mixtos$auto,
+  PC1 = pca_mixtos$x[, 1],
+  PC2 = pca_mixtos$x[, 2],
+  cluster_gower = datos_mixtos$cluster_gower,
+  cyl = datos_mixtos$cyl,
+  am = datos_mixtos$am
+)
+
+ggplot(pca_mixtos_df, aes(PC1, PC2, color = cluster_gower, shape = am)) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(title = "PAM con distancia de Gower visualizado en espacio PCA")
+```
+
+# 10. Interpretación de clusters
+
+Después de crear clusters, debemos caracterizarlos.
+
+Preguntas clave:
+
+- ¿Qué variables diferencian a los clusters?
+- ¿Hay clusters claramente interpretables?
+- ¿Existen observaciones ambiguas?
+- ¿Los clusters tienen utilidad para tomar decisiones?
+
+## Resumen de variables numéricas por cluster
+
+```{r resumen-numerico-clusters}
+datos_mixtos %>%
+  group_by(cluster_gower) %>%
+  summarise(
+    n = n(),
+    mpg_promedio = mean(mpg),
+    hp_promedio = mean(hp),
+    wt_promedio = mean(wt),
+    .groups = "drop"
+  )
+```
+
+## Distribución de variables categóricas por cluster
+
+```{r resumen-categorico-clusters}
+table(datos_mixtos$cluster_gower, datos_mixtos$cyl)
+table(datos_mixtos$cluster_gower, datos_mixtos$am)
+table(datos_mixtos$cluster_gower, datos_mixtos$consumo)
+```
+
+## Visualización de perfiles
+
+```{r perfil-long}
+perfil_long <- datos_mixtos %>%
+  select(cluster_gower, mpg, hp, wt) %>%
+  pivot_longer(cols = c(mpg, hp, wt), names_to = "variable", values_to = "valor")
+
+ggplot(perfil_long, aes(cluster_gower, valor, fill = cluster_gower)) +
+  geom_boxplot(alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Distribución de variables numéricas por cluster") +
+  theme(legend.position = "none")
+```
+
+# 11. Pruebas estadísticas entre clusters
+
+Podemos usar pruebas estadísticas para evaluar si ciertas variables difieren entre clusters. Sin embargo, debemos recordar que los clusters fueron creados a partir de los datos; por lo tanto, las pruebas deben interpretarse con cuidado.
+
+## ANOVA para variables numéricas
+
+```{r anova-clusters}
+summary(aov(mpg ~ cluster_gower, data = datos_mixtos))
+summary(aov(hp ~ cluster_gower, data = datos_mixtos))
+summary(aov(wt ~ cluster_gower, data = datos_mixtos))
+```
+
+## Kruskal-Wallis como alternativa no paramétrica
+
+```{r kruskal-clusters}
+kruskal.test(mpg ~ cluster_gower, data = datos_mixtos)
+kruskal.test(hp ~ cluster_gower, data = datos_mixtos)
+kruskal.test(wt ~ cluster_gower, data = datos_mixtos)
+```
+
+## Chi-cuadrado para variables categóricas
+
+```{r chisq-clusters}
+chisq.test(table(datos_mixtos$cluster_gower, datos_mixtos$cyl))
+chisq.test(table(datos_mixtos$cluster_gower, datos_mixtos$am))
+```
+
+En muestras pequeñas, como `mtcars`, estas pruebas tienen baja potencia y pueden tener supuestos débiles. En datos reales con más observaciones, este análisis puede ser más informativo.
+
+# 12. Estabilidad de clusters
+
+Un cluster robusto debería aparecer de manera similar cuando perturbamos levemente los datos.
+
+Una forma simple de evaluar estabilidad es:
+
+1. Tomar muchas submuestras del dataset.
+2. Aplicar clustering en cada submuestra.
+3. Comparar las soluciones con la solución original.
+4. Resumir la similitud usando ARI.
+
+Usaremos `iris` para tener más observaciones.
+
+```{r datos-iris-estabilidad}
+data(iris)
+iris_num <- iris %>% dplyr::select(where(is.numeric))
+iris_scaled <- scale(iris_num)
+
+set.seed(123)
+km_iris_original <- kmeans(iris_scaled, centers = 3, nstart = 25)
+cluster_original <- km_iris_original$cluster
+
+pca_iris <- prcomp(iris_scaled)
+pca_iris_df <- data.frame(
+  PC1 = pca_iris$x[, 1],
+  PC2 = pca_iris$x[, 2],
+  cluster = factor(cluster_original),
+  especie = iris$Species
+)
+
+ggplot(pca_iris_df, aes(PC1, PC2, color = cluster, shape = especie)) +
+  geom_point(size = 2.5) +
+  theme_minimal() +
+  labs(title = "K-means en iris visualizado mediante PCA")
+```
+
+## Función simple para evaluar estabilidad
+
+```{r funcion-estabilidad}
+evaluar_estabilidad_kmeans <- function(x, k = 3, prop = 0.8, B = 100) {
+  n <- nrow(x)
+  km_original <- kmeans(x, centers = k, nstart = 25)
+  cluster_original <- km_original$cluster
+  
+  resultados <- numeric(B)
+  
+  for (b in seq_len(B)) {
+    idx <- sample(seq_len(n), size = floor(prop * n), replace = FALSE)
+    km_b <- kmeans(x[idx, ], centers = k, nstart = 25)
+    
+    resultados[b] <- adjustedRandIndex(
+      cluster_original[idx],
+      km_b$cluster
+    )
+  }
+  
+  resultados
+}
+
+set.seed(123)
+estabilidad_iris <- evaluar_estabilidad_kmeans(iris_scaled, k = 3, prop = 0.8, B = 100)
+
+summary(estabilidad_iris)
+```
+
+```{r plot-estabilidad}
+data.frame(ARI = estabilidad_iris) %>%
+  ggplot(aes(ARI)) +
+  geom_histogram(bins = 20, color = "white") +
+  theme_minimal() +
+  labs(
+    title = "Distribución de estabilidad de clusters",
+    subtitle = "ARI entre solución original y soluciones en submuestras",
+    x = "Adjusted Rand Index",
+    y = "Frecuencia"
+  )
+```
+
+## Interpretación
+
+- Si la mayoría de los ARI son altos, la solución es relativamente estable.
+- Si los ARI varían mucho o son bajos, la solución depende demasiado de los datos específicos usados.
+- La estabilidad no garantiza que los clusters tengan significado real, pero ayuda a detectar soluciones frágiles.
+
+# 13. Comparación de estabilidad para distintos valores de k
+
+Podemos repetir el análisis para diferentes números de clusters.
+
+```{r estabilidad-varios-k}
+set.seed(123)
+ks <- 2:6
+
+estabilidad_k <- map_dfr(ks, function(k_actual) {
+  ari <- evaluar_estabilidad_kmeans(iris_scaled, k = k_actual, prop = 0.7, B = 50)
+  data.frame(k = k_actual, ARI = ari)
+})
+
+ggplot(estabilidad_k, aes(factor(k), ARI)) +
+  geom_boxplot() +
+  theme_minimal() +
+  labs(
+    title = "Estabilidad de k-means para distintos valores de k",
+    x = "Número de clusters",
+    y = "ARI"
+  )
+```
+
+**Pregunta de discusión:**  
+¿El número de clusters con mayor estabilidad coincide con el número de clusters sugerido por silhouette o elbow?
+
+# 14. Comparación entre métodos: k-means, PAM y DBSCAN
+
+Ahora compararemos tres métodos usando el dataset `iris`.
+
+```{r comparacion-metodos-iris}
+set.seed(123)
+
+km_iris <- kmeans(iris_scaled, centers = 3, nstart = 25)
+pam_iris <- pam(iris_scaled, k = 3)
+db_iris <- dbscan(iris_scaled, eps = 0.9, minPts = 5)
+
+comparacion_iris <- data.frame(
+  PC1 = pca_iris$x[, 1],
+  PC2 = pca_iris$x[, 2],
+  especie = iris$Species,
+  kmeans = factor(km_iris$cluster),
+  pam = factor(pam_iris$clustering),
+  dbscan = factor(db_iris$cluster)
+)
+
+ggplot(comparacion_iris, aes(PC1, PC2, color = kmeans, shape = especie)) +
+  geom_point(size = 2.5) +
+  theme_minimal() +
+  labs(title = "K-means")
+
+ggplot(comparacion_iris, aes(PC1, PC2, color = pam, shape = especie)) +
+  geom_point(size = 2.5) +
+  theme_minimal() +
+  labs(title = "PAM")
+
+ggplot(comparacion_iris, aes(PC1, PC2, color = dbscan, shape = especie)) +
+  geom_point(size = 2.5) +
+  theme_minimal() +
+  labs(title = "DBSCAN")
+```
+
+## Comparación con etiqueta externa
+
+Aunque `Species` no fue usada para construir los clusters, podemos usarla como una referencia externa.
+
+```{r ari-metodos-species}
+ari_kmeans <- adjustedRandIndex(iris$Species, km_iris$cluster)
+ari_pam <- adjustedRandIndex(iris$Species, pam_iris$clustering)
+ari_dbscan <- adjustedRandIndex(iris$Species, db_iris$cluster)
+
+data.frame(
+  metodo = c("k-means", "PAM", "DBSCAN"),
+  ARI_vs_Species = c(ari_kmeans, ari_pam, ari_dbscan)
+)
+```
+
+**Importante:**  
+Una variable externa puede ayudar a interpretar los clusters, pero no siempre debe esperarse que los clusters reproduzcan exactamente esa variable. A veces el clustering descubre otra estructura de los datos.
+
+# 15. Silhouette como medida de separación interna
+
+La silhouette mide qué tan bien asignada está una observación a su cluster, comparando su distancia promedio dentro del cluster con su distancia promedio al cluster más cercano.
+
+Valores típicos:
+
+- Cercano a 1: observación bien asignada.
+- Cercano a 0: observación entre dos clusters.
+- Negativo: observación posiblemente mal asignada.
+
+```{r silhouette-comparacion}
+sil_kmeans <- silhouette(km_iris$cluster, dist(iris_scaled))
+sil_pam <- silhouette(pam_iris$clustering, dist(iris_scaled))
+
+mean(sil_kmeans[, "sil_width"])
+mean(sil_pam[, "sil_width"])
+
+plot(sil_kmeans, main = "Silhouette - k-means")
+plot(sil_pam, main = "Silhouette - PAM")
+```
+
+DBSCAN puede generar ruido, codificado como cluster 0. Para calcular silhouette, se suele remover el ruido o tratarlo con cuidado.
+
+```{r silhouette-dbscan}
+idx_no_ruido <- db_iris$cluster != 0
+
+if (length(unique(db_iris$cluster[idx_no_ruido])) > 1) {
+  sil_dbscan <- silhouette(
+    db_iris$cluster[idx_no_ruido],
+    dist(iris_scaled[idx_no_ruido, ])
+  )
+  mean(sil_dbscan[, "sil_width"])
+  plot(sil_dbscan, main = "Silhouette - DBSCAN sin ruido")
+} else {
+  print("DBSCAN encontró menos de dos clusters sin considerar ruido; no se calcula silhouette.")
+}
+```
+
+# 16. Explicar clusters usando un árbol de decisión
+
+Una forma simple e interpretable de explicar clusters es ajustar un modelo supervisado donde la variable respuesta sea el cluster.
+
+Esto no valida los clusters de manera independiente, pero ayuda a describir qué variables los separan.
+
+```{r arbol-explicativo, message=FALSE, warning=FALSE}
+if (!"rpart" %in% installed.packages()[, "Package"]) install.packages("rpart")
+if (!"rpart.plot" %in% installed.packages()[, "Package"]) install.packages("rpart.plot")
+
+library(rpart)
+library(rpart.plot)
+
+datos_arbol <- iris %>%
+  mutate(cluster_kmeans = factor(km_iris$cluster))
+
+arbol_cluster <- rpart(
+  cluster_kmeans ~ Sepal.Length + Sepal.Width + Petal.Length + Petal.Width,
+  data = datos_arbol,
+  method = "class"
+)
+
+rpart.plot(arbol_cluster)
+```
+
+**Interpretación:**  
+El árbol permite identificar reglas simples que aproximan la asignación de clusters. Por ejemplo, puede mostrar que una variable como `Petal.Length` separa fuertemente algunos grupos.
+
+# 17. Advertencia: circularidad analítica
+
+Si usamos las mismas variables para crear los clusters y luego entrenamos un modelo para predecir esos clusters, el modelo puede alcanzar alta precisión porque está aprendiendo a imitar el algoritmo de clustering.
+
+Esto puede ser útil para interpretación, pero no necesariamente demuestra que los clusters tengan significado externo.
+
+Para validar utilidad real, podemos preguntar:
+
+- ¿Los clusters predicen una variable externa no usada en el clustering?
+- ¿Los clusters se reproducen en nuevos datos?
+- ¿Los clusters son estables ante remuestreo?
+- ¿Tienen una interpretación coherente con el dominio?
+
+# 18. Ejercicio guiado
+
+Usa el dataset `USArrests`, que contiene variables sobre arrestos en estados de Estados Unidos.
+
+```{r ejercicio-usarrests}
+data("USArrests")
+head(USArrests)
+summary(USArrests)
+```
+
+## Instrucciones
+
+1. Escala las variables.
+2. Aplica k-means con $k = 2$, $k = 3$ y $k = 4$.
+3. Calcula silhouette promedio para cada valor de $k$.
+4. Aplica PAM con el mejor $k$ según silhouette.
+5. Visualiza los clusters usando PCA.
+6. Compara k-means y PAM usando ARI.
+7. Interpreta los clusters: ¿qué estados o perfiles aparecen juntos?
+8. Evalúa la estabilidad de k-means usando la función `evaluar_estabilidad_kmeans()`.
+
+## Espacio para desarrollo
+
+```{r ejercicio-espacio, eval=FALSE}
+# 1. Escalar datos
+usarrests_scaled <- scale(USArrests)
+
+# 2. K-means para distintos valores de k
+set.seed(123)
+km2 <- kmeans(usarrests_scaled, centers = 2, nstart = 25)
+km3 <- kmeans(usarrests_scaled, centers = 3, nstart = 25)
+km4 <- kmeans(usarrests_scaled, centers = 4, nstart = 25)
+
+# 3. Silhouette promedio
+mean(silhouette(km2$cluster, dist(usarrests_scaled))[, "sil_width"])
+mean(silhouette(km3$cluster, dist(usarrests_scaled))[, "sil_width"])
+mean(silhouette(km4$cluster, dist(usarrests_scaled))[, "sil_width"])
+
+# 4. PAM
+pam_us <- pam(usarrests_scaled, k = 2)
+
+# 5. PCA
+pca_us <- prcomp(usarrests_scaled)
+pca_us_df <- data.frame(
+  estado = rownames(USArrests),
+  PC1 = pca_us$x[, 1],
+  PC2 = pca_us$x[, 2],
+  cluster_kmeans = factor(km2$cluster),
+  cluster_pam = factor(pam_us$clustering)
+)
+
+ggplot(pca_us_df, aes(PC1, PC2, color = cluster_kmeans, label = estado)) +
+  geom_point(size = 3) +
+  geom_text(vjust = -0.5, size = 3) +
+  theme_minimal()
+
+# 6. Comparación ARI
+adjustedRandIndex(km2$cluster, pam_us$clustering)
+
+# 7. Interpretación
+USArrests %>%
+  mutate(cluster = factor(km2$cluster)) %>%
+  group_by(cluster) %>%
+  summarise(across(everything(), mean), .groups = "drop")
+
+# 8. Estabilidad
+ari_estabilidad_us <- evaluar_estabilidad_kmeans(usarrests_scaled, k = 2, B = 100)
+summary(ari_estabilidad_us)
+```
+
+# 19. Ejercicio avanzado
+
+Elige uno de los siguientes datasets:
+
+- `iris`
+- `mtcars`
+- `USArrests`
+- Un dataset propio
+
+Realiza un análisis comparativo de clustering considerando:
+
+1. Selección de variables.
+2. Escalamiento.
+3. Elección de distancia.
+4. Aplicación de al menos dos métodos de clustering.
+5. Evaluación interna mediante silhouette.
+6. Evaluación de estabilidad mediante remuestreo.
+7. Interpretación estadística de los clusters.
+8. Discusión crítica de limitaciones.
+
+Producto esperado:
+
+- Una figura PCA con clusters.
+- Una tabla de perfilamiento de clusters.
+- Una comparación entre métodos.
+- Una conclusión breve: ¿los clusters son útiles, robustos e interpretables?
+
+# 20. Conclusiones de la clase
+
+En esta clase vimos que el clustering aplicado requiere más que ejecutar un algoritmo. Las principales ideas son:
+
+1. K-means es útil, pero tiene supuestos fuertes.
+2. DBSCAN permite detectar clusters de forma irregular y puntos de ruido.
+3. PAM es una alternativa más robusta y flexible que k-means.
+4. La escala y la distancia pueden cambiar completamente los resultados.
+5. La distancia de Gower permite trabajar con variables mixtas.
+6. La estabilidad ayuda a evaluar si los clusters son reproducibles.
+7. La interpretación de clusters debe combinar visualización, estadística y conocimiento del dominio.
+8. Los clusters no deben tratarse automáticamente como clases reales; deben validarse críticamente.
+
+# 21. Preguntas finales de discusión
+
+1. ¿Qué diferencia hay entre encontrar clusters y demostrar que esos clusters son útiles?
+2. ¿Qué método usarías si esperas clusters no esféricos?
+3. ¿Qué harías si tus clusters cambian mucho al modificar la semilla?
+4. ¿Por qué la elección de distancia puede ser más importante que el algoritmo?
+5. ¿Cuándo sería problemático usar clusters como variable respuesta en un modelo predictivo?
+6. ¿Qué evidencia pedirías antes de nombrar un cluster como “alto riesgo”, “bajo consumo” o “perfil agresivo”?
+

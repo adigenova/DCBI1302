@@ -173,3 +173,22 @@ Taller PCA
 
 [RmarkDown](https://github.com/adigenova//DCBI1302/clob/main/code/taller_clase2.Rmd)
 [html](https://github.com/adigenova//DCBI1302/clob/main/code/taller_clase2.html)
+
+## 19/11/2026
+
+
+PCA II and Clustering I
+
+### slides
+
+[slides 1](https://github.com/adigenova/DCBI1302/blob/main/class/PCA2_clusterI.pdf)
+
+
+## 20/11/2026
+
+Taller clustering
+
+### code
+
+[RmarkDown](https://github.com/adigenova//DCBI1302/clob/main/code/clustering2.Rmd)
+[html](https://github.com/adigenova//DCBI1302/clob/main/code/clustering2.html)
